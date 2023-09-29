@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/metavariable-pattern/test2.php"
     ]
@@ -62,7 +61,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/metavariable-pattern/test2.php",
       "start": {
@@ -72,5 +72,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

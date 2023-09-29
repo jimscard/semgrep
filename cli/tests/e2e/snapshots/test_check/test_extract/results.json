@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/extract/js_html_concat.html"
     ]
@@ -22,7 +21,8 @@
         "message": "Found match",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/extract/js_html_concat.html",
       "start": {
@@ -46,61 +46,14 @@
         "message": "Found match",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/extract/js_html_concat.html",
       "start": {
         "col": 33,
         "line": 8,
         "offset": 253
-      }
-    },
-    {
-      "check_id": "rules.extract_rules.get-elem-id",
-      "end": {
-        "col": 68,
-        "line": 22,
-        "offset": 667
-      },
-      "extra": {
-        "engine_kind": "OSS",
-        "fingerprint": "0x42",
-        "is_ignored": false,
-        "lines": "            function myFunction() { document.getElementById(\"demo\").innerHTML = \"Paragraph changed.\"; }",
-        "message": "Found match",
-        "metadata": {},
-        "metavars": {},
-        "severity": "ERROR"
-      },
-      "path": "targets/extract/js_html_concat.html",
-      "start": {
-        "col": 37,
-        "line": 22,
-        "offset": 636
-      }
-    },
-    {
-      "check_id": "rules.extract_rules.get-elem-id",
-      "end": {
-        "col": 68,
-        "line": 24,
-        "offset": 806
-      },
-      "extra": {
-        "engine_kind": "OSS",
-        "fingerprint": "0x42",
-        "is_ignored": false,
-        "lines": "            function myFunction() { document.getElementById(\"demo\").innerHTML = \"Paragraph changed.\"; }",
-        "message": "Found match",
-        "metadata": {},
-        "metavars": {},
-        "severity": "ERROR"
-      },
-      "path": "targets/extract/js_html_concat.html",
-      "start": {
-        "col": 37,
-        "line": 24,
-        "offset": 775
       }
     },
     {
@@ -180,8 +133,8 @@
             "abstract_content": "x",
             "end": {
               "col": 14,
-              "line": 7,
-              "offset": 325
+              "line": 10,
+              "offset": 369
             },
             "propagated_value": {
               "svalue_abstract_content": "foo()",
@@ -198,18 +151,69 @@
             },
             "start": {
               "col": 13,
-              "line": 7,
-              "offset": 324
+              "line": 10,
+              "offset": 368
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/extract/js_html_concat.html",
       "start": {
         "col": 9,
         "line": 10,
         "offset": 364
+      }
+    },
+    {
+      "check_id": "rules.extract_rules.get-elem-id",
+      "end": {
+        "col": 68,
+        "line": 22,
+        "offset": 667
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "is_ignored": false,
+        "lines": "            function myFunction() { document.getElementById(\"demo\").innerHTML = \"Paragraph changed.\"; }",
+        "message": "Found match",
+        "metadata": {},
+        "metavars": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/extract/js_html_concat.html",
+      "start": {
+        "col": 37,
+        "line": 22,
+        "offset": 636
+      }
+    },
+    {
+      "check_id": "rules.extract_rules.get-elem-id",
+      "end": {
+        "col": 68,
+        "line": 24,
+        "offset": 806
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "is_ignored": false,
+        "lines": "            function myFunction() { document.getElementById(\"demo\").innerHTML = \"Paragraph changed.\"; }",
+        "message": "Found match",
+        "metadata": {},
+        "metavars": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/extract/js_html_concat.html",
+      "start": {
+        "col": 37,
+        "line": 24,
+        "offset": 775
       }
     },
     {
@@ -289,8 +293,8 @@
             "abstract_content": "x",
             "end": {
               "col": 18,
-              "line": 14,
-              "offset": 655
+              "line": 27,
+              "offset": 900
             },
             "propagated_value": {
               "svalue_abstract_content": "foo()",
@@ -307,12 +311,13 @@
             },
             "start": {
               "col": 17,
-              "line": 14,
-              "offset": 654
+              "line": 27,
+              "offset": 899
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/extract/js_html_concat.html",
       "start": {
@@ -322,5 +327,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

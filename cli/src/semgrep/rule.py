@@ -1,7 +1,5 @@
 import hashlib
 import json
-from enum import auto
-from enum import Enum
 from typing import Any
 from typing import AnyStr
 from typing import cast
@@ -12,7 +10,7 @@ from typing import Sequence
 from typing import Set
 from typing import Union
 
-import semgrep.output_from_core as core
+import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.constants import RuleScanSource
 from semgrep.constants import RuleSeverity
 from semgrep.error import InvalidRuleSchemaError
@@ -26,11 +24,6 @@ from semgrep.semgrep_types import JOIN_MODE
 from semgrep.semgrep_types import LANGUAGE
 from semgrep.semgrep_types import Language
 from semgrep.semgrep_types import SEARCH_MODE
-
-
-class RuleProduct(Enum):
-    sast = auto()
-    sca = auto()
 
 
 class Rule:
@@ -136,12 +129,12 @@ class Rule:
         return self._excludes
 
     @property
-    def id(self) -> str:  # TODO: return a core.RuleId
+    def id(self) -> str:  # TODO: return a out.RuleId
         return self._id
 
     @property
-    def id2(self) -> core.RuleId:  # TODO: merge with id
-        return core.RuleId(self._id)
+    def id2(self) -> out.RuleId:  # TODO: merge with id
+        return out.RuleId(self._id)
 
     @property
     def message(self) -> str:
@@ -255,12 +248,16 @@ class Rule:
         return any(key in RuleValidation.PATTERN_KEYS for key in self._raw)
 
     @property
-    def product(self) -> RuleProduct:
-        return (
-            RuleProduct.sca
-            if "r2c-internal-project-depends-on" in self._raw
-            else RuleProduct.sast
-        )
+    def product(self) -> out.Product:
+        if "r2c-internal-project-depends-on" in self._raw:
+            return out.Product(out.SCA())
+        elif "product" in self.metadata:
+            if self.metadata.get("product") == "secrets":
+                return out.Product(out.Secrets())
+            else:
+                return out.Product(out.SAST())
+        else:
+            return out.Product(out.SAST())
 
     @property
     def scan_source(self) -> RuleScanSource:

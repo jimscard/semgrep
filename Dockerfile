@@ -88,7 +88,14 @@ COPY cli/src/semgrep/semgrep_interfaces cli/src/semgrep/semgrep_interfaces
 # coupling: if you modify the FROM below, you probably need to modify also
 # a few .github/workflows/ files. grep for returntocorp/ocaml there.
 
-FROM returntocorp/ocaml:alpine-2023-06-16 as semgrep-core-container
+# This base image should be updated regularly to maximize the caching
+# of opam packages. We don't use a rolling ':latest' tag to ensure
+# reproducible builds and fix problems more easily.
+#
+# Visit https://hub.docker.com/r/returntocorp/ocaml/tags to see the latest
+# images available.
+#
+FROM returntocorp/ocaml:alpine-2023-09-13 as semgrep-core-container
 
 WORKDIR /src/semgrep
 COPY --from=semgrep-core-files /src/semgrep .
@@ -192,8 +199,6 @@ COPY cli ./
 RUN apk add --no-cache --virtual=.build-deps build-base make g++ &&\
      pip install jsonnet &&\
      pip install /semgrep &&\
-     # running this pre-compiles some python files for faster startup times
-     semgrep --version &&\
      apk del .build-deps
 
 # Let the user know how their container was built
@@ -215,12 +220,12 @@ WORKDIR /src
 
 # Better to avoid running semgrep as root
 # See https://stackoverflow.com/questions/49193283/why-it-is-unsafe-to-run-applications-as-root-in-docker-container
-RUN addgroup --system semgrep \
-    && adduser --system --shell /bin/false --ingroup semgrep semgrep \
+RUN adduser -D -u 1000 -h /home/semgrep semgrep \
     && chown semgrep /src
 
 # Disabling defaulting to the user semgrep for now
 # We can set it by default once we fix the circle ci workflows
+# See nonroot build stage below.
 #USER semgrep
 
 # Workaround for rootless containers as git operations may fail due to dubious
@@ -235,3 +240,23 @@ RUN printf "[safe]\n	directory = /src"  > ~semgrep/.gitconfig && \
 # to interactively explore the docker image.
 CMD ["semgrep", "--help"]
 LABEL maintainer="support@semgrep.com"
+
+# Additional build stage that sets a non-root user.
+# Can't make this the default in semgrep-cli stage because of permissions errors
+# on the mounted volume when using instructions for running semgrep with docker:
+# `docker run -v "${PWD}:/src" -i returntocorp/semgrep semgrep`
+FROM semgrep-cli AS nonroot
+
+# We need to move the core binary out of the protected /usr/local/bin dir so
+# the non-root user can run `semgrep install-semgrep-pro` and use Pro Engine
+# Alt: we could also do this work directly in the root docker image.
+RUN rm /usr/local/bin/osemgrep && \
+    mkdir /home/semgrep/bin && \
+    mv /usr/local/bin/semgrep-core /home/semgrep/bin && \
+    ln -s semgrep-core /home/semgrep/bin/osemgrep && \
+    chown semgrep:semgrep /home/semgrep/bin
+
+# Update PATH with new core binary location
+ENV PATH="$PATH:/home/semgrep/bin"
+
+USER semgrep

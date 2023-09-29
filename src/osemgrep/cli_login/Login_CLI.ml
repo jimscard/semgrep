@@ -1,5 +1,6 @@
-(* Provides the 'Arg', 'Cmd', 'Manpage', and 'Term' modules. *)
-open Cmdliner
+module Arg = Cmdliner.Arg
+module Term = Cmdliner.Term
+module Cmd = Cmdliner.Cmd
 
 (*****************************************************************************)
 (* Prelude *)
@@ -11,7 +12,7 @@ open Cmdliner
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-type conf = { logging_level : Logs.level option } [@@deriving show]
+type conf = { common : CLI_common.conf } [@@deriving show]
 
 (*****************************************************************************)
 (* Login subcommand *)
@@ -19,9 +20,9 @@ type conf = { logging_level : Logs.level option } [@@deriving show]
 
 let login_doc = "Obtain and save credentials for semgrep.dev"
 
-let login_man : Manpage.block list =
+let login_man : Cmdliner.Manpage.block list =
   [
-    `S Manpage.s_description;
+    `S Cmdliner.Manpage.s_description;
     `P
       "Obtain and save credentials for semgrep.dev\n\n\
       \    Looks for an semgrep.dev API token in the environment variable \
@@ -40,9 +41,9 @@ let login_cmdline_info : Cmd.info =
 
 let logout_doc = "Remove locally stored credentials to semgrep.dev"
 
-let logout_man : Manpage.block list =
+let logout_man : Cmdliner.Manpage.block list =
   [
-    `S Manpage.s_description;
+    `S Cmdliner.Manpage.s_description;
     `P "Remove locally stored credentials to semgrep.dev";
   ]
   @ CLI_common.help_page_bottom
@@ -55,8 +56,8 @@ let logout_cmdline_info : Cmd.info =
 (*****************************************************************************)
 
 let term =
-  let combine logging_level = { logging_level } in
-  Term.(const combine $ CLI_common.o_logging)
+  let combine common = { common } in
+  Term.(const combine $ CLI_common.o_common)
 
 let parse_argv (cmd_info : Cmd.info) (argv : string array) : conf =
   let cmd : conf Cmd.t = Cmd.v cmd_info term in

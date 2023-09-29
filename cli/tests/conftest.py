@@ -1,3 +1,7 @@
+##############################################################################
+# Prelude
+##############################################################################
+# Helper functions and classes useful for writing tests.
 import json
 import os
 import re
@@ -28,9 +32,17 @@ from semgrep import __VERSION__
 from semgrep.cli import cli
 from semgrep.constants import OutputFormat
 
+##############################################################################
+# Constants
+##############################################################################
+
 TESTS_PATH = Path(__file__).parent
 
+##############################################################################
+# Pytest hacks
+##############################################################################
 
+# ???
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--run-only-snapshots",
@@ -40,6 +52,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+# ???
 def pytest_collection_modifyitems(items: pytest.Item, config: pytest.Config) -> None:
     if config.getoption("--run-only-snapshots"):
         selected_items: List[pytest.Item] = []
@@ -55,6 +68,11 @@ def pytest_collection_modifyitems(items: pytest.Item, config: pytest.Config) -> 
 
         config.hook.pytest_deselected(items=deselected_items)
         items[:] = selected_items
+
+
+##############################################################################
+# Helper functions
+##############################################################################
 
 
 def make_semgrepconfig_file(dir_path: Path, contents: str) -> None:
@@ -89,19 +107,10 @@ def _clean_stdout(out):
     if json_output.get("version"):
         json_output["version"] = "0.42"
 
-    # Necessary because some tests produce temp files
-    if json_output.get("errors"):
-        for error in json_output.get("errors"):
-            if error.get("spans"):
-                for span in error.get("spans"):
-                    if span.get("file"):
-                        file = span.get("file")
-                        span["file"] = file if "tmp" not in file else "tmp/masked/path"
-
     return json.dumps(json_output)
 
 
-def _clean_output_json(output_json: str, clean_fingerprint: bool) -> str:
+def _clean_output_if_json(output_json: str, clean_fingerprint: bool) -> str:
     """Make semgrep's output deterministic and nicer to read."""
     try:
         output = json.loads(output_json)
@@ -114,6 +123,10 @@ def _clean_output_json(output_json: str, clean_fingerprint: bool) -> str:
     ]
     for path in masked_keys:
         mark_masked(output, path)
+
+    # The masking code below is a little complicated. We could use the
+    # regexp-based mechanism above (mark_masked) for everything to simplify
+    # the porting to osemgrep.
 
     # Remove temp file paths
     results = output.get("results")
@@ -128,35 +141,10 @@ def _clean_output_json(output_json: str, clean_fingerprint: bool) -> str:
             if clean_fingerprint:
                 r["extra"]["fingerprint"] = "0x42"
 
-    paths = output.get("paths", {})
-    if paths.get("scanned"):
-        paths["scanned"] = [
-            p if "/tmp" not in p else "/tmp/masked/path" for p in paths["scanned"]
-        ]
-    if paths.get("skipped"):
-        paths["skipped"] = [
-            {
-                **skip,
-                "path": skip["path"]
-                if "/tmp" not in skip["path"]
-                else "/tmp/masked/path",
-            }
-            for skip in paths["skipped"]
-        ]
-
-    # Necessary because some tests produce temp files
-    if output.get("errors"):
-        for error in output.get("errors"):
-            if error.get("spans"):
-                for span in error.get("spans"):
-                    if span.get("file"):
-                        file = span.get("file")
-                        span["file"] = file if "tmp" not in file else "tmp/masked/path"
-
     return json.dumps(output, indent=2, sort_keys=True)
 
 
-def _clean_output_sarif(output_json: str) -> str:
+def _clean_output_if_sarif(output_json: str) -> str:
     try:
         output = json.loads(output_json)
     except json.decoder.JSONDecodeError:
@@ -196,14 +184,48 @@ def mask_capture_group(match: re.Match) -> str:
     return text
 
 
+# ProTip: make sure your regexps can't match JSON quotes so as to keep any
+# JSON parseable after a substitution!
 ALWAYS_MASK: Maskers = (
-    _clean_output_sarif,
+    _clean_output_if_sarif,
     __VERSION__,
     re.compile(r"python (\d+[.]\d+[.]\d+[ ]+)"),
     re.compile(r'SEMGREP_SETTINGS_FILE="(.+?)"'),
     re.compile(r'SEMGREP_VERSION_CACHE_PATH="(.+?)"'),
     re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"),
+    # Hide any substring that resembles a temporary file path.
+    # This may be a little too broad but it's simpler than inspecting
+    # specific JSON fields on case-per-case basis.
+    #
+    # In the future, we may have to hide the temporary folder since it
+    # can vary from one OS to another.
+    # This regexp masks the tail of a path containing 'tmp' or '/tmp'.
+    re.compile(r"((?:/?tmp[A-Za-z0-9_-]*)(?:/[A-Za-z0-9_.-]*)*)"),
+    # osemgrep only. Needed to match the pysemgrep output b/c pysemgrep
+    # uses a temporary path to store rules by osemgrep doesn't.
+    re.compile(r'"path": *"(rules/[^"]*)"'),
 )
+
+
+def mask_variable_text(
+    text: str, mask: Optional[Maskers] = None, clean_fingerprint: bool = True
+) -> str:
+    if mask is None:
+        mask = []
+    for pattern in [*mask, *ALWAYS_MASK]:
+        if isinstance(pattern, str):
+            text = text.replace(pattern, "<MASKED>")
+        elif isinstance(pattern, re.Pattern):
+            text = pattern.sub(mask_capture_group, text)
+        elif callable(pattern):
+            text = pattern(text)
+    # strip trailing whitespace characters that are emitted by pysemgrep,
+    # but we do not plan to emit them in osemgrep
+    text = re.sub(r"[ \t]+$", "", text, flags=re.M)
+    # special code for JSON cleaning, used to be in ALWAYS_MASK
+    # but sometimes we want fingerprint masking and sometimes not
+    text = _clean_output_if_json(text, clean_fingerprint)
+    return text
 
 
 @dataclass
@@ -221,37 +243,29 @@ class SemgrepResult:
         stream.seek(0)
         return stream.read()
 
-    def mask_text(self, text: str, mask: Optional[Maskers] = None) -> str:
-        if mask is None:
-            mask = []
-        for pattern in [*mask, *ALWAYS_MASK]:
-            if isinstance(pattern, str):
-                text = text.replace(pattern, "<MASKED>")
-            elif isinstance(pattern, re.Pattern):
-                text = pattern.sub(mask_capture_group, text)
-            elif callable(pattern):
-                text = pattern(text)
-        # strip trailing whitespace characters that are emitted by pysemgrep,
-        # but we do not plan to emit them in osemgrep
-        text = re.sub(r"[ \t]+$", "", text, flags=re.M)
-        # special code for JSON cleaning, used to be in ALWAYS_MASK
-        # but sometimes we want fingerprint masking and sometimes not
-        text = _clean_output_json(text, self.clean_fingerprint)
-        return text
-
     @property
     def stdout(self) -> str:
-        return self.mask_text(self.raw_stdout)
+        return mask_variable_text(
+            self.raw_stdout, clean_fingerprint=self.clean_fingerprint
+        )
 
     @property
     def stderr(self) -> str:
-        return self.mask_text(self.raw_stderr)
+        return mask_variable_text(
+            self.raw_stderr, clean_fingerprint=self.clean_fingerprint
+        )
 
     def as_snapshot(self, mask: Optional[Maskers] = None):
-        stdout = self.mask_text(self.raw_stdout, mask)
-        stderr = self.mask_text(self.raw_stderr, mask)
+        stdout = mask_variable_text(
+            self.raw_stdout, mask, clean_fingerprint=self.clean_fingerprint
+        )
+        stderr = mask_variable_text(
+            self.raw_stderr, mask, clean_fingerprint=self.clean_fingerprint
+        )
         sections = {
-            "command": self.mask_text(self.command, mask),
+            "command": mask_variable_text(
+                self.command, mask, clean_fingerprint=self.clean_fingerprint
+            ),
             "exit code": self.exit_code,
             "stdout - plain": self.strip_color(stdout),
             "stderr - plain": self.strip_color(stderr),
@@ -304,6 +318,7 @@ def _run_semgrep(
     force_metrics_off: bool = True,
     stdin: Optional[str] = None,
     clean_fingerprint: bool = True,
+    use_click_runner: bool = False,  # Deprecated! see semgrep_runner.py toplevel comment
 ) -> SemgrepResult:
     """Run the semgrep CLI.
 
@@ -313,7 +328,7 @@ def _run_semgrep(
     :param output_format: which format to use
     :param stderr: whether to merge stderr into the returned string
     :param settings_file: what setting file for semgrep to use. If None, a random temp file is generated
-                          with default params ("has_shown_metrics_notification: true")
+                          with default params for anonymous_user_id and has_shown_metrics_notification
     """
     env = {} if not env else env.copy()
 
@@ -328,7 +343,10 @@ def _run_semgrep(
     # Use a unique settings file so multithreaded pytest works well
     if "SEMGREP_SETTINGS_FILE" not in env:
         unique_settings_file = tempfile.NamedTemporaryFile().name
-        Path(unique_settings_file).write_text("has_shown_metrics_notification: true")
+        Path(unique_settings_file).write_text(
+            "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
+            "has_shown_metrics_notification: true\n"
+        )
 
         env["SEMGREP_SETTINGS_FILE"] = unique_settings_file
     if "SEMGREP_VERSION_CACHE_PATH" not in env:
@@ -373,7 +391,7 @@ def _run_semgrep(
     args = " ".join(shlex.quote(str(c)) for c in [*options, *targets])
     env_string = " ".join(f'{k}="{v}"' for k, v in env.items())
 
-    runner = SemgrepRunner(env=env, mix_stderr=False)
+    runner = SemgrepRunner(env=env, mix_stderr=False, use_click_runner=use_click_runner)
     click_result = runner.invoke(cli, args, input=stdin)
     result = SemgrepResult(
         # the actual executable was either semgrep or osemgrep. Is it bad?
@@ -391,6 +409,11 @@ def _run_semgrep(
         assert result.exit_code == assert_exit_code
 
     return result
+
+
+##############################################################################
+# Fixtures
+##############################################################################
 
 
 @pytest.fixture()
@@ -442,7 +465,7 @@ def git_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # Initialize State
     subprocess.run(["git", "init"], check=True, capture_output=True)
     subprocess.run(
-        ["git", "config", "user.email", "baselinetest@r2c.dev"],
+        ["git", "config", "user.email", "baselinetest@semgrep.com"],
         check=True,
         capture_output=True,
     )
@@ -462,6 +485,20 @@ def git_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 @pytest.fixture
 def parse_lockfile_path_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     (tmp_path / "targets").symlink_to(Path(TESTS_PATH / "e2e" / "targets").resolve())
+    (tmp_path / "rules").symlink_to(Path(TESTS_PATH / "e2e" / "rules").resolve())
+    monkeypatch.chdir(tmp_path)
+    return parse_lockfile_path
+
+
+# similar to parse_lockfile_path_in_tmp but with different targets path to save
+# disk space (see performance/targets_perf_sca/readme.txt)
+@pytest.fixture
+def parse_lockfile_path_in_tmp_for_perf(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    (tmp_path / "targets_perf_sca").symlink_to(
+        Path(TESTS_PATH / "performance" / "targets_perf_sca").resolve()
+    )
     (tmp_path / "rules").symlink_to(Path(TESTS_PATH / "e2e" / "rules").resolve())
     monkeypatch.chdir(tmp_path)
     return parse_lockfile_path

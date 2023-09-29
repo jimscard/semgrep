@@ -12,20 +12,13 @@ open Cmdliner
 (* Types *)
 (*************************************************************************)
 
-(* Used mostly to decide between pysemgrep and osemgrep for now (could be
- * used for different things later).
- * Legacy is also used to specify whether to keep pysemgrep
- * behavior/limitations/errors even when we stay in osemgrep land.
- *)
-type maturity = Experimental | Legacy [@@deriving show]
-
 type conf = {
   (* mix of --debug, --quiet, --verbose *)
   logging_level : Logs.level option;
   (* osemgrep-only: pad poor's man profiling info for now *)
   profile : bool;
-  (* osemgrep-only: mix of --experimental, --legacy *)
-  maturity : maturity option;
+  (* osemgrep-only: mix of --experimental, --legacy, --develop *)
+  maturity : Maturity.t;
 }
 [@@deriving show]
 
@@ -35,11 +28,15 @@ type conf = {
 
 (* alt: we could use Logs_cli.level(), but by defining our own flags
  * we can give better ~doc:. We lose the --verbosity=Level though.
+ * TODO: maybe "findings" below is to cli_scan specific
  *)
 let o_quiet : bool Term.t =
   let info = Arg.info [ "q"; "quiet" ] ~doc:{|Only output findings.|} in
   Arg.value (Arg.flag info)
 
+(* TODO: same, maybe we should take the doc as a paramter so each
+ * cli_xxx command can give a different help
+ *)
 let o_verbose : bool Term.t =
   let info =
     Arg.info [ "v"; "verbose" ]
@@ -120,46 +117,6 @@ let o_profile : bool Term.t =
   Arg.value (Arg.flag info)
 
 (*************************************************************************)
-(* Maturity options *)
-(*************************************************************************)
-
-(* We could remove the flags below and handle them manually in
- * cli/bin/semgrep or in ../cli/CLI.ml and remove them from Sys.argv
- * before going further in the individual cli_xxx/
- * (especially because they're mostly used for the pysemgrep/osemgrep
- * dispatch for now), but it's still useful to have them as explicit flags
- * so they show up in the man pages (e.g., in 'semgrep scan --help').
- * It's also nice to accept the --experimental flag for people explicitely
- * calling osemgrep directly.
- *)
-
-(* osemgrep-only:  *)
-let o_experimental : bool Term.t =
-  let info =
-    Arg.info [ "experimental" ] ~doc:{|Enable experimental features.|}
-  in
-  Arg.value (Arg.flag info)
-
-(* osemgrep-only:  *)
-let o_legacy : bool Term.t =
-  let info =
-    (* alt: Keep the pysemgrep behaviors/limitations/errors *)
-    Arg.info [ "legacy" ] ~doc:{|Prefer old (legacy) behavior.|}
-  in
-  Arg.value (Arg.flag info)
-
-let o_maturity : maturity option Term.t =
-  let combine experimental legacy =
-    match (experimental, legacy) with
-    | false, false -> None
-    | true, false -> Some Experimental
-    | false, true -> Some Legacy
-    | true, true ->
-        Error.abort "mutually exclusive options --experimental/--legacy"
-  in
-  Term.(const combine $ o_experimental $ o_legacy)
-
-(*************************************************************************)
 (* Term for all common CLI flags *)
 (*************************************************************************)
 
@@ -167,7 +124,7 @@ let o_common : conf Term.t =
   let combine logging profile maturity =
     { logging_level = logging; profile; maturity }
   in
-  Term.(const combine $ o_logging $ o_profile $ o_maturity)
+  Term.(const combine $ o_logging $ o_profile $ Maturity.o_maturity)
 
 (*************************************************************************)
 (* Misc *)
@@ -176,7 +133,7 @@ let o_common : conf Term.t =
 let help_page_bottom =
   [
     `S Manpage.s_authors;
-    `P "r2c <support@r2c.dev>";
+    `P "Semgrep Inc. <support@semgrep.com>";
     `S Manpage.s_bugs;
     `P
       "If you encounter an issue, please report it at\n\

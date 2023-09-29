@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/match_based_id/duplicates/duplicate1.py",
       "targets/match_based_id/duplicates/duplicate2.py"
@@ -37,7 +36,47 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/match_based_id/duplicates/duplicate1.py",
+      "start": {
+        "col": 4,
+        "line": 1,
+        "offset": 3
+      }
+    },
+    {
+      "check_id": "rules.match_based_id.eqeq-bad-dup",
+      "end": {
+        "col": 10,
+        "line": 1,
+        "offset": 9
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_0",
+        "is_ignored": false,
+        "lines": "if 5 == 5:",
+        "message": "useless comparison",
+        "metadata": {},
+        "metavars": {
+          "$X": {
+            "abstract_content": "5",
+            "end": {
+              "col": 5,
+              "line": 1,
+              "offset": 4
+            },
+            "start": {
+              "col": 4,
+              "line": 1,
+              "offset": 3
+            }
+          }
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/match_based_id/duplicates/duplicate1.py",
       "start": {
@@ -75,7 +114,47 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/match_based_id/duplicates/duplicate1.py",
+      "start": {
+        "col": 4,
+        "line": 4,
+        "offset": 34
+      }
+    },
+    {
+      "check_id": "rules.match_based_id.eqeq-bad-dup",
+      "end": {
+        "col": 10,
+        "line": 4,
+        "offset": 40
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_1",
+        "is_ignored": false,
+        "lines": "if 5 == 5:",
+        "message": "useless comparison",
+        "metadata": {},
+        "metavars": {
+          "$X": {
+            "abstract_content": "5",
+            "end": {
+              "col": 5,
+              "line": 4,
+              "offset": 35
+            },
+            "start": {
+              "col": 4,
+              "line": 4,
+              "offset": 34
+            }
+          }
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/match_based_id/duplicates/duplicate1.py",
       "start": {
@@ -113,7 +192,47 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/match_based_id/duplicates/duplicate2.py",
+      "start": {
+        "col": 4,
+        "line": 1,
+        "offset": 3
+      }
+    },
+    {
+      "check_id": "rules.match_based_id.eqeq-bad-dup",
+      "end": {
+        "col": 10,
+        "line": 1,
+        "offset": 9
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "76ef6b1c1d5e528a4653a7700d0f8d3c6096fac1e5ae06cae9546f6eb4b3db95a9221562cb7ad517f2d5936284f6bc1439a4e1d4b4831820a946d5a6e618cb2e_0",
+        "is_ignored": false,
+        "lines": "if 5 == 5:",
+        "message": "useless comparison",
+        "metadata": {},
+        "metavars": {
+          "$X": {
+            "abstract_content": "5",
+            "end": {
+              "col": 5,
+              "line": 1,
+              "offset": 4
+            },
+            "start": {
+              "col": 4,
+              "line": 1,
+              "offset": 3
+            }
+          }
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/match_based_id/duplicates/duplicate2.py",
       "start": {
@@ -151,127 +270,14 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/match_based_id/duplicates/duplicate2.py",
       "start": {
         "col": 4,
         "line": 4,
         "offset": 34
-      }
-    },
-    {
-      "check_id": "rules.match_based_id.eqeq-bad-dup",
-      "end": {
-        "col": 10,
-        "line": 1,
-        "offset": 9
-      },
-      "extra": {
-        "engine_kind": "OSS",
-        "fingerprint": "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_0",
-        "is_ignored": false,
-        "lines": "if 5 == 5:",
-        "message": "useless comparison",
-        "metadata": {},
-        "metavars": {
-          "$X": {
-            "abstract_content": "5",
-            "end": {
-              "col": 5,
-              "line": 1,
-              "offset": 4
-            },
-            "start": {
-              "col": 4,
-              "line": 1,
-              "offset": 3
-            }
-          }
-        },
-        "severity": "ERROR"
-      },
-      "path": "targets/match_based_id/duplicates/duplicate1.py",
-      "start": {
-        "col": 4,
-        "line": 1,
-        "offset": 3
-      }
-    },
-    {
-      "check_id": "rules.match_based_id.eqeq-bad-dup",
-      "end": {
-        "col": 10,
-        "line": 4,
-        "offset": 40
-      },
-      "extra": {
-        "engine_kind": "OSS",
-        "fingerprint": "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_1",
-        "is_ignored": false,
-        "lines": "if 5 == 5:",
-        "message": "useless comparison",
-        "metadata": {},
-        "metavars": {
-          "$X": {
-            "abstract_content": "5",
-            "end": {
-              "col": 5,
-              "line": 4,
-              "offset": 35
-            },
-            "start": {
-              "col": 4,
-              "line": 4,
-              "offset": 34
-            }
-          }
-        },
-        "severity": "ERROR"
-      },
-      "path": "targets/match_based_id/duplicates/duplicate1.py",
-      "start": {
-        "col": 4,
-        "line": 4,
-        "offset": 34
-      }
-    },
-    {
-      "check_id": "rules.match_based_id.eqeq-bad-dup",
-      "end": {
-        "col": 10,
-        "line": 1,
-        "offset": 9
-      },
-      "extra": {
-        "engine_kind": "OSS",
-        "fingerprint": "76ef6b1c1d5e528a4653a7700d0f8d3c6096fac1e5ae06cae9546f6eb4b3db95a9221562cb7ad517f2d5936284f6bc1439a4e1d4b4831820a946d5a6e618cb2e_0",
-        "is_ignored": false,
-        "lines": "if 5 == 5:",
-        "message": "useless comparison",
-        "metadata": {},
-        "metavars": {
-          "$X": {
-            "abstract_content": "5",
-            "end": {
-              "col": 5,
-              "line": 1,
-              "offset": 4
-            },
-            "start": {
-              "col": 4,
-              "line": 1,
-              "offset": 3
-            }
-          }
-        },
-        "severity": "ERROR"
-      },
-      "path": "targets/match_based_id/duplicates/duplicate2.py",
-      "start": {
-        "col": 4,
-        "line": 1,
-        "offset": 3
       }
     },
     {
@@ -303,7 +309,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/match_based_id/duplicates/duplicate2.py",
       "start": {
@@ -313,5 +320,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

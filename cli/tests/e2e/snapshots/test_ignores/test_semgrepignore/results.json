@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/ignores/find.js",
       "targets/ignores/ok/find.js"
@@ -37,7 +36,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/ignores/find.js",
       "start": {
@@ -75,7 +75,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/ignores/ok/find.js",
       "start": {
@@ -85,5 +86,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

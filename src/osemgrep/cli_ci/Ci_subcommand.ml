@@ -1,4 +1,4 @@
-open Common
+module Out = Semgrep_output_v1_t
 
 (*****************************************************************************)
 (* Prelude *)
@@ -8,8 +8,6 @@ open Common
 
    Translated from ci.py
 *)
-
-module Out = Semgrep_output_v1_t
 
 (*****************************************************************************)
 (* Types *)
@@ -22,21 +20,19 @@ module Out = Semgrep_output_v1_t
 (* eventually output the origin (if the semgrep_url is not semgrep.dev) *)
 let at_url_maybe ppf () =
   if
-    Uri.equal Semgrep_envvars.v.semgrep_url
+    Uri.equal !Semgrep_envvars.v.semgrep_url
       (Uri.of_string "https://semgrep.dev")
   then Fmt.string ppf ""
   else
     Fmt.pf ppf " at %a"
       Fmt.(styled `Bold string)
-      (Uri.to_string Semgrep_envvars.v.semgrep_url)
+      (Uri.to_string !Semgrep_envvars.v.semgrep_url)
 
 let decode_rules data =
   Common2.with_tmp_file ~str:data ~ext:"json" (fun file ->
       let file = Fpath.v file in
-      let res =
-        Rule_fetching.load_rules_from_file ~registry_caching:false file
-      in
-      { res with origin = None })
+      Rule_fetching.load_rules_from_file ~origin:Other_origin
+        ~registry_caching:false file)
 
 let fetch_scan_config ~token ~dry_run ~sca ~full_scan ~repository scan_id =
   Logs.app (fun m ->
@@ -66,7 +62,7 @@ let fetch_scan_config ~token ~dry_run ~sca ~full_scan ~repository scan_id =
 
 (* from meta.py *)
 let generate_meta_from_environment (_baseline_ref : Digestif.SHA1.t option) :
-    unit Project_metadata.t =
+    Project_metadata.t =
   (* https://help.github.com/en/actions/configuring-and-managing-workflows/using-environment-variables *)
   let r =
     let argv = [| "empty" |] and info_ = Cmdliner.Cmd.info "" in
@@ -134,7 +130,7 @@ let partition_rules (filtered_rules : Rule.t list) =
       (fun r ->
         Common2.string_match_substring
           (Str.regexp "r2c-internal-cai")
-          (Rule.ID.to_string (fst r.Rule.id)))
+          (Rule_ID.to_string (fst r.Rule.id)))
       filtered_rules
   in
   let blocking_rules, non_blocking_rules =
@@ -205,17 +201,19 @@ let finding_of_cli_match _commit_date index (m : Out.cli_match) : Out.finding =
           (* TODO: if self.extra.get("fixed_lines"): ret.fixed_lines = self.extra.get("fixed_lines") *);
         sca_info = None;
         (* TODO *)
-        dataflow_trace = None (* TODO *);
+        dataflow_trace = None;
+        validation_state = None;
       }
   in
   r
 
 (* from scans.py *)
 let prepare_for_report ~blocking_findings findings errors rules ~targets
-    ~(ignored_targets : Out.cli_skipped_target list option) ~commit_date
+    ~(contributions : Out.contribution list option)
+    ~(ignored_targets : Out.skipped_target list option) ~commit_date
     ~engine_requested =
   let rule_ids =
-    Common.map (fun r -> Rule.ID.to_string (fst r.Rule.id)) rules
+    Common.map (fun r -> Rule_ID.to_string (fst r.Rule.id)) rules
   in
   (*
       we want date stamps assigned by the app to be assigned such that the
@@ -266,6 +264,9 @@ let prepare_for_report ~blocking_findings findings errors rules ~targets
         (* TODO: get renamed_paths, depends on baseline_commit *)
         renamed_paths = [];
         rule_ids;
+        contributions;
+        (* TODO: Figure out correct value for this. *)
+        dependencies = None;
       }
   in
   let findings_and_ignores =
@@ -281,7 +282,7 @@ let prepare_for_report ~blocking_findings findings errors rules ~targets
 
   let ignored_ext_freqs =
     Option.value ~default:[] ignored_targets
-    |> Common.group_by (fun (skipped_target : Out.cli_skipped_target) ->
+    |> Common.group_by (fun (skipped_target : Out.skipped_target) ->
            Fpath.get_ext (Fpath.v skipped_target.Out.path))
     |> List.filter (fun (ext, _) -> not (String.equal ext ""))
     (* don't count files with no extension *)
@@ -347,15 +348,12 @@ let prepare_for_report ~blocking_findings findings errors rules ~targets
 
 (* All the business logic after command-line parsing. Return the desired
    exit code. *)
-let run (conf : Ci_CLI.conf) : Exit_code.t =
+let run_conf (conf : Ci_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:conf.force_color
     ~level:conf.common.logging_level;
+  (* TODO? we probably want to set the metrics to On by default in CI ctx? *)
   Metrics_.configure conf.metrics;
-  let settings =
-    Semgrep_settings.load
-      ~legacy:(conf.common.maturity =*= Some CLI_common.Legacy)
-      ()
-  in
+  let settings = Semgrep_settings.load ~maturity:conf.common.maturity () in
   let deployment =
     match (settings.api_token, conf.rules_source) with
     | None, Rules_source.Configs [] ->
@@ -370,19 +368,21 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                those findings must come from rules configured there. Drop the \
                `--config` to use rules configured on semgrep.dev or log out.");
         Error Exit_code.fatal
+    (* TODO: document why we support running the ci command without a token *)
     | None, _ -> Ok None
     | Some token, _ -> (
-        match Semgrep_App.get_deployment_from_token ~token with
+        match Semgrep_App.get_scan_config_from_token ~token with
         | None ->
             Logs.app (fun m ->
                 m
                   "API token not valid. Try to run `semgrep logout` and \
                    `semgrep login` again.");
             Error Exit_code.invalid_api_key
-        | Some t -> Ok (Some (token, t)))
+        | Some deployment_config -> Ok (Some (token, deployment_config)))
   in
   (* TODO: pass baseline commit! *)
   let metadata = generate_meta_from_environment None in
+  let contributions = Parse_contribution.get_contributions () in
   match deployment with
   | Error e -> e
   | Ok depl -> (
@@ -400,10 +400,9 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
             "  environment - running in environment %a, triggering event is \
              %a@."
             Fmt.(styled `Bold string)
-            (Option.value ~default:"unknown"
-               metadata.Project_metadata.scan_environment)
+            metadata.scan_environment
             Fmt.(styled `Bold string)
-            (Option.value ~default:"unknown" metadata.Project_metadata.on));
+            metadata.on);
       (* TODO: fix_head_if_github_action(metadata) *)
       (* Either a scan_id and the rules for the project, or None and the rules
          specified on command-line. If something fails, an exit code is
@@ -413,6 +412,11 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                 Exit_code.t )
               result) =
         match depl with
+        (* TODO: document why we support running the ci command without a
+         * token / deployment. Without this no token / no deployment case,
+         * we could unify the two code branches
+         *  below and work to start simplifying this massive function.
+         *)
         | None ->
             Ok
               ( None,
@@ -420,20 +424,21 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                   ~token_opt:settings.api_token
                   ~rewrite_rule_ids:conf.rewrite_rule_ids
                   ~registry_caching:conf.registry_caching conf.rules_source )
-        | Some (token, deployment) -> (
+        | Some (token, deployment_config) -> (
             Logs.app (fun m ->
                 m "  %a" Fmt.(styled `Underline string) "CONNECTION");
             Logs.app (fun m ->
                 m "  Reporting start of scan for %a"
                   Fmt.(styled `Bold string)
-                  deployment);
-            let metadata_dict = Project_metadata.to_dict metadata in
-            (* TODO: metadata_dict["is_sca_scan"] = supply_chain *)
-            (* TODO: proj_config = ProjectConfig.load_all()
-               metadata_dict = {**metadata_dict, **proj_config.to_dict()} *)
+                  deployment_config.deployment_name);
+            (* TODO:
+                metadata_dict["is_sca_scan"] = supply_chain
+                proj_config = ProjectConfig.load_all()
+                metadata_dict = {**metadata_dict, **proj_config.to_dict()}
+            *)
             match
               Scan_helper.start_scan ~dry_run:conf.dryrun ~token
-                Semgrep_envvars.v.semgrep_url metadata_dict
+                !Semgrep_envvars.v.semgrep_url metadata
             with
             | Error msg ->
                 Logs.err (fun m -> m "Could not start scan %s" msg);
@@ -491,7 +496,14 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                baseline_commit_is_mergebase=True,
             *)
             let profiler = Profiler.make () in
-            match Scan_subcommand.scan_files rules_and_origin profiler conf with
+            let targets_and_ignored =
+              Find_targets.get_targets conf.targeting_conf conf.target_roots
+            in
+            let res =
+              Scan_subcommand.run_scan_files conf profiler rules_and_origin
+                targets_and_ignored
+            in
+            match res with
             | Error e ->
                 (match (depl, scan_id) with
                 | Some (token, _), Some scan_id ->
@@ -552,7 +564,7 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                          "rule"));
                 let app_block_override, reason =
                   match (depl, scan_id) with
-                  | Some (token, deployment_name), Some scan_id ->
+                  | Some (token, deployment_config), Some scan_id ->
                       Logs.app (fun m -> m "  Uploading findings.");
                       let findings_and_ignores, complete =
                         prepare_for_report
@@ -563,6 +575,7 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                           ~targets:cli_output.Out.paths.Out.scanned
                           ~ignored_targets:cli_output.Out.paths.skipped
                           ~commit_date:"" ~engine_requested:`OSS
+                          ~contributions:(Some contributions)
                       in
                       let result =
                         match
@@ -579,17 +592,17 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                           m "  View results in Semgrep Cloud Platform:");
                       Logs.app (fun m ->
                           m "    https://semgrep.dev/orgs/%s/findings"
-                            deployment_name);
+                            deployment_config.deployment_name);
                       if
                         List.exists
                           (fun r ->
                             String.equal "r2c-internal-project-depends-on"
-                              (Rule.ID.to_string (fst r.Rule.id)))
+                              (Rule_ID.to_string (fst r.Rule.id)))
                           filtered_rules
                       then
                         Logs.app (fun m ->
                             m "    https://semgrep.dev/orgs/%s/supply-chain"
-                              deployment_name);
+                              deployment_config.deployment_name);
                       result
                   | _ -> (false, "")
                 in
@@ -602,8 +615,7 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
                           m
                             "  Audit mode is on for %s, so exiting with code 0 \
                              even if matches found"
-                            (Option.value ~default:"unknown"
-                               metadata.Project_metadata.on));
+                            metadata.on);
                       Exit_code.ok)
                     else (
                       Logs.app (fun m ->
@@ -643,4 +655,4 @@ let run (conf : Ci_CLI.conf) : Exit_code.t =
 
 let main (argv : string array) : Exit_code.t =
   let conf = Ci_CLI.parse_argv argv in
-  run conf
+  run_conf conf

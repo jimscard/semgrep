@@ -9,13 +9,19 @@ CLI_RULE_ID = "-"
 PLEASE_FILE_ISSUE_TEXT = "An error occurred while invoking the Semgrep engine. Please help us fix this by creating an issue at https://github.com/returntocorp/semgrep"
 
 DEFAULT_SEMGREP_CONFIG_NAME = "semgrep"
-DEFAULT_CONFIG_FILE = f".{DEFAULT_SEMGREP_CONFIG_NAME}.yml"
-DEFAULT_CONFIG_FOLDER = f".{DEFAULT_SEMGREP_CONFIG_NAME}"
 DEFAULT_SEMGREP_APP_CONFIG_URL = "api/agent/deployments/scans/config"
 
 DEFAULT_TIMEOUT = 30  # seconds
 DEFAULT_PRO_TIMEOUT_CI = 10800  # seconds
 DEFAULT_MAX_MEMORY_PRO_CI = 5000  # MiB
+
+# The default depth has been configured as -1 in order to prevent unexpected
+# behavior for current users of pro intra-file diff scanning. To enable pro
+# inter-file diff scanning, users are required to manually specify the
+# `-diff-depth` parameter with a value equal to or greater than 0.
+# TODO update the default depth to a non-negative value, such as 2, once this
+# new feature has reached a stable state.
+DEFAULT_DIFF_DEPTH = -1
 
 SETTINGS_FILENAME = "settings.yml"
 
@@ -128,6 +134,7 @@ class Colors(Enum):
     white = 7
     black = 256
     cyan = "cyan"  # for filenames
+    gray = "bright_black"  # for commands
     green = "green"  # for autofix
     yellow = "yellow"  # TODO: benchmark timing output?
     red = "red"  # for errors

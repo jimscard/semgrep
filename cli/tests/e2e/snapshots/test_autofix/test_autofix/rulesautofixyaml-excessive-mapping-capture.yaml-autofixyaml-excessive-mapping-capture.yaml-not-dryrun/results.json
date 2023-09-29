@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/autofix/yaml-excessive-mapping-capture.yaml"
     ]
@@ -39,7 +38,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/autofix/yaml-excessive-mapping-capture.yaml",
       "start": {
@@ -49,5 +49,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

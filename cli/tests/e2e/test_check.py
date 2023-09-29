@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from tests.conftest import _clean_output_json
 from tests.conftest import _clean_stdout
+from tests.conftest import mask_variable_text
 from tests.fixtures import RunSemgrep
 from tests.semgrep_runner import SEMGREP_BASE_COMMAND
 from tests.semgrep_runner import SEMGREP_BASE_COMMAND_STR
@@ -222,14 +222,17 @@ def test_terminal_output_quiet(run_semgrep_in_tmp: RunSemgrep, snapshot):
 
 @pytest.mark.kinda_slow
 def test_stdin_input(snapshot):
-    settings_file = tempfile.NamedTemporaryFile().name
-    Path(settings_file).write_text("has_shown_metrics_notification: true")
+    unique_settings_file = tempfile.NamedTemporaryFile().name
+    Path(unique_settings_file).write_text(
+        "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
+        "has_shown_metrics_notification: true\n"
+    )
     process = subprocess.Popen(
         SEMGREP_BASE_COMMAND + ["--json", "-e", "a", "--lang", "js", "-"],
         encoding="utf-8",
         env={
             **os.environ,
-            "SEMGREP_SETTINGS_FILE": settings_file,
+            "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
             "SEMGREP_SEND_METRICS": "off",
@@ -238,13 +241,16 @@ def test_stdin_input(snapshot):
         stdout=subprocess.PIPE,
     )
     stdout, _ = process.communicate("a")
-    snapshot.assert_match(_clean_output_json(stdout, True), "results.json")
+    snapshot.assert_match(mask_variable_text(stdout), "results.json")
 
 
 @pytest.mark.kinda_slow
 def test_subshell_input(snapshot):
-    settings_file = tempfile.NamedTemporaryFile().name
-    Path(settings_file).write_text("has_shown_metrics_notification: true")
+    unique_settings_file = tempfile.NamedTemporaryFile().name
+    Path(unique_settings_file).write_text(
+        "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
+        "has_shown_metrics_notification: true\n"
+    )
     stdout = subprocess.check_output(
         [
             "bash",
@@ -254,7 +260,7 @@ def test_subshell_input(snapshot):
         encoding="utf-8",
         env={
             **os.environ,
-            "SEMGREP_SETTINGS_FILE": settings_file,
+            "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
             "SEMGREP_SEND_METRICS": "off",
@@ -262,13 +268,16 @@ def test_subshell_input(snapshot):
     )
     # Clean fingerprint from result since it's path dependent and that changes
     # everytime due to the way stdin works
-    snapshot.assert_match(_clean_output_json(stdout, True), "results.json")
+    snapshot.assert_match(mask_variable_text(stdout), "results.json")
 
 
 @pytest.mark.kinda_slow
 def test_multi_subshell_input(snapshot):
-    settings_file = tempfile.NamedTemporaryFile().name
-    Path(settings_file).write_text("has_shown_metrics_notification: true")
+    unique_settings_file = tempfile.NamedTemporaryFile().name
+    Path(unique_settings_file).write_text(
+        "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
+        "has_shown_metrics_notification: true\n"
+    )
     stdout = subprocess.check_output(
         [
             "bash",
@@ -278,13 +287,13 @@ def test_multi_subshell_input(snapshot):
         encoding="utf-8",
         env={
             **os.environ,
-            "SEMGREP_SETTINGS_FILE": settings_file,
+            "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
             "SEMGREP_SEND_METRICS": "off",
         },
     )
-    snapshot.assert_match(_clean_output_json(stdout, True), "results.json")
+    snapshot.assert_match(mask_variable_text(stdout), "results.json")
 
 
 @pytest.mark.kinda_slow
@@ -334,20 +343,6 @@ def test_hidden_rule__implicit(run_semgrep_in_tmp: RunSemgrep, snapshot):
         "rules/hidden", output_format=OutputFormat.TEXT, assert_exit_code=7
     )
     snapshot.assert_match(stderr, "error.txt")
-
-
-@pytest.mark.kinda_slow
-def test_default_rule__file(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    Path(".semgrep.yml").symlink_to(Path("rules/eqeq.yaml").resolve())
-    snapshot.assert_match(run_semgrep_in_tmp().stdout, "results.json")
-
-
-@pytest.mark.kinda_slow
-def test_default_rule__folder(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    Path(".semgrep").mkdir()
-    Path(".semgrep/.semgrep.yml").symlink_to(Path("rules/eqeq.yaml").resolve())
-
-    snapshot.assert_match(run_semgrep_in_tmp().stdout, "results.json")
 
 
 @pytest.mark.kinda_slow
@@ -460,8 +455,9 @@ def test_nested_pattern_either_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
     )
 
 
+# TODO: This can be marked osempass once we port cli_unique_key deduplication
+# https://github.com/returntocorp/semgrep/pull/8510
 @pytest.mark.kinda_slow
-@pytest.mark.osempass
 def test_metavariable_regex_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
     snapshot.assert_match(
         run_semgrep_in_tmp("rules/metavariable-regex.yaml").stdout, "results.json"
@@ -732,8 +728,9 @@ def test_multiple_configs_different_origins(run_semgrep_in_tmp: RunSemgrep, snap
     )
 
 
+# TODO: This can be marked osempass once we port cli_unique_key deduplication
+# https://github.com/returntocorp/semgrep/pull/8510
 @pytest.mark.kinda_slow
-@pytest.mark.osempass
 def test_metavariable_propagation_regex(run_semgrep_in_tmp: RunSemgrep, snapshot):
     snapshot.assert_match(
         run_semgrep_in_tmp(
@@ -840,5 +837,37 @@ def multi_focus_metavariable(run_semgrep_in_tmp: RunSemgrep, snapshot):
             strict=False,
             output_format=OutputFormat.TEXT,
         ).stderr,
+        "output.txt",
+    )
+
+
+# Check that pysemgrep and osemgrep sort the results identically.
+# We don't really need it as a product feature but it's important to
+# compare the output of osemgrep with the output of pysemgrep.
+@pytest.mark.quick
+@pytest.mark.osempass
+def test_sort_json_findings(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    snapshot.assert_match(
+        run_semgrep_in_tmp(
+            "rules/sort-findings.yaml",
+            target_name="sort-findings",
+            strict=False,
+        ).stdout,
+        "results.json",
+    )
+
+
+# Check that pysemgrep and osemgrep sort the results as intended
+# when presenting them in text format.
+@pytest.mark.quick
+@pytest.mark.osempass
+def test_sort_text_findings(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    snapshot.assert_match(
+        run_semgrep_in_tmp(
+            "rules/sort-findings.yaml",
+            target_name="sort-findings",
+            strict=False,
+            output_format=OutputFormat.TEXT,
+        ).stdout,
         "output.txt",
     )

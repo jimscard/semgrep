@@ -21,8 +21,6 @@ let default_settings =
     anonymous_user_id = Uuidm.v `V4;
   }
 
-let settings = Semgrep_envvars.v.user_settings_file
-
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
@@ -78,7 +76,9 @@ let to_yaml { has_shown_metrics_notification; api_token; anonymous_user_id } =
 (* Entry points *)
 (*****************************************************************************)
 
-let load ?(legacy = false) () =
+let load ?(maturity = Maturity.Default) () =
+  let settings = !Semgrep_envvars.v.user_settings_file in
+  Logs.debug (fun m -> m "Loading settings from %a" Fpath.pp settings);
   try
     if
       Sys.file_exists (Fpath.to_string settings)
@@ -101,15 +101,18 @@ let load ?(legacy = false) () =
               default_settings
           | Ok s -> s)
     else (
-      if not legacy then
-        Logs.warn (fun m ->
-            m "Settings file %a does not exist or is not a regular file"
-              Fpath.pp settings);
+      (match maturity with
+      | Maturity.Develop ->
+          Logs.warn (fun m ->
+              m "Settings file %a does not exist or is not a regular file"
+                Fpath.pp settings)
+      | _else_ -> ());
       default_settings)
   with
   | Failure _ -> default_settings
 
 let save setting =
+  let settings = !Semgrep_envvars.v.user_settings_file in
   let yaml = to_yaml setting in
   let str = Yaml.to_string_exn yaml in
   try
@@ -118,7 +121,7 @@ let save setting =
     let tmp = Filename.temp_file ~temp_dir:dir "settings" "yml" in
     if Sys.file_exists tmp then Sys.remove tmp;
     File.write_file (Fpath.v tmp) str;
-    (* Create a termporary file and rename to have a consisting settings file,
+    (* Create a temporary file and rename to have a consistent settings file,
        even if the power fails (or a Ctrl-C happens) during the write_file. *)
     Unix.rename tmp (Fpath.to_string settings);
     true

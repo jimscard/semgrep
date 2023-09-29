@@ -23,13 +23,22 @@ type conf = {
   rewrite_rule_ids : bool;
   time_flag : bool;
   engine_type : Engine_type.t;
+  (* Indicates the user requested Semgrep Secrets postprocessors to
+     validate secret findings. *)
+  run_secrets : bool;
+  allow_untrusted_postprocessors : bool;
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
   (* Display options *)
   (* mix of --json, --emacs, --vim, etc. *)
   output_format : Output_format.t;
+  (* file or URL (None means output to stdout) *)
+  output : string option;
+  dataflow_traces : bool;
   force_color : bool;
-  (* text output config (TODO: make a separate type gathering all of them) *)
+  (* text output config (TODO: make a separate type gathering all of them)
+   * or add them under Output_format.Text
+   *)
   max_chars_per_line : int;
   max_lines_per_finding : int;
   (* Networking options *)
@@ -39,8 +48,7 @@ type conf = {
   common : CLI_common.conf;
   (* Ugly: should be in separate subcommands *)
   version : bool;
-  show_supported_languages : bool;
-  dump : Dump_subcommand.conf option;
+  show : Show_CLI.conf option;
   validate : Validate_subcommand.conf option;
   test : Test_subcommand.conf option;
 }

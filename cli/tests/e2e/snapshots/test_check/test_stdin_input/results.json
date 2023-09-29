@@ -1,9 +1,8 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
-      "/tmp/masked/path"
+      "<MASKED>"
     ]
   },
   "results": [
@@ -22,9 +21,10 @@
         "message": "a",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
-      "path": "/tmp/masked/path",
+      "path": "<MASKED>",
       "start": {
         "col": 1,
         "line": 1,
@@ -32,5 +32,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

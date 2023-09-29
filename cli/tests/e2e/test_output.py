@@ -98,6 +98,35 @@ def test_output_highlighting__force_color_and_no_color(
     )
 
 
+@pytest.mark.osempass
+@pytest.mark.kinda_slow
+def test_yaml_capturing(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    results, _errors = run_semgrep_in_tmp(
+        "rules/yaml_capture.yaml",
+        target_name="yaml/yaml_capture.yaml",
+        output_format=OutputFormat.TEXT,
+        strict=False,
+    )
+    snapshot.assert_match(
+        results,
+        "results.txt",
+    )
+
+
+@pytest.mark.kinda_slow
+def test_promql_duration_captures(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    results, _errors = run_semgrep_in_tmp(
+        "rules/promql-duration-capture.yaml",
+        target_name="promql/promql-duration-capture.yaml",
+        output_format=OutputFormat.TEXT,
+        strict=False,
+    )
+    snapshot.assert_match(
+        results,
+        "results.txt",
+    )
+
+
 # This test is just for making sure that our YAML parser interacts properly
 # with metavariables. We don't want to introduce regressions which might
 # mess this up.
@@ -213,11 +242,13 @@ def test_debug_experimental_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
                 re.compile(r"(.*Main\.Parse_target.*)"),
                 re.compile(r"(.*Main\.Core_CLI.*)"),
                 re.compile(r"semgrep ran in (.*) on 1 files"),
+                re.compile(r"semgrep contributions ran in (.*)"),
                 re.compile(r"\"total_time\":(.*)"),
                 re.compile(r"\"commit_date\":(.*)"),
                 re.compile(r"-targets (.*) -timeout"),
                 re.compile(r"-rules (.*).json"),
                 re.compile(r".*Main.Autofix.*"),
+                re.compile(r"-j ([0-9]+)"),
             ]
         ),
         "results.txt",
@@ -470,6 +501,20 @@ def test_sca_lockfile_only_output(run_semgrep_on_copied_files: RunSemgrep, snaps
         "rules/dependency_aware/lodash-4.17.19.yaml",
         target_name="dependency_aware/unreachable_multiple_copies/yarn.lock",
         output_format=OutputFormat.TEXT,
+    )
+    snapshot.assert_match(
+        results,
+        "results.txt",
+    )
+
+
+@pytest.mark.kinda_slow
+def test_cli_test_secret_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    results, _ = run_semgrep_in_tmp(
+        "rules/secrets.yaml",
+        target_name="cli_test/basic/",
+        output_format=OutputFormat.TEXT,
+        force_color=True,
     )
     snapshot.assert_match(
         results,

@@ -67,10 +67,16 @@ class ErrorHandler:
         ):
             return exit_code
 
+        url = f"{state.env.fail_open_url}/failure"
+
         import traceback
 
+        logger.error(
+            "There were errors during analysis but Semgrep will succeed because there were no blocking findings, use --no-suppress-errors if you want Semgrep to fail when there are errors."
+        )
+
         logger.debug(
-            f"Sending to fail-open endpoint {state.env.fail_open_url} since fail-open is configured to {self.suppress_errors}"
+            f"Sending to fail-open endpoint {url} since fail-open is configured to {self.suppress_errors}"
         )
 
         token = auth.get_token()
@@ -82,9 +88,7 @@ class ErrorHandler:
             self.payload["error"] = traceback.format_exc()
 
         try:
-            requests.post(
-                state.env.fail_open_url, headers=headers, json=self.payload, timeout=3
-            )
+            requests.post(url, headers=headers, json=self.payload, timeout=3)
         except Exception as e:
             logger.debug(f"Error sending to fail-open endpoint: {e}")
 

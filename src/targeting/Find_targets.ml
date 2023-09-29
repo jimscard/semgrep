@@ -1,6 +1,6 @@
 open Common
 open File.Operators
-module Out = Output_from_core_t
+module Out = Semgrep_output_v1_t
 
 (*************************************************************************)
 (* Prelude *)
@@ -55,6 +55,7 @@ type conf = {
   respect_git_ignore : bool;
   (* TODO? use, and better parsing of the string? a Git.version type? *)
   baseline_commit : string option;
+  diff_depth : int;
   (* TODO: use *)
   scan_unknown_extensions : bool;
   (* osemgrep-only: option (see Git_project.ml and the force_root parameter) *)
@@ -148,7 +149,16 @@ let walk_skip_and_collect (conf : conf) (ign : Semgrepignore.t)
             * TODO? maybe add a setting in conf?
             * TODO? add a skip reason for those?
             *)
-           if name =~ "^\\." then ignore ()
+           if name =~ "^\\." then
+             let skip =
+               {
+                 Out.path = !!fpath;
+                 reason = Out.Dotfile;
+                 details = None;
+                 rule_id = None;
+               }
+             in
+             Common.push skip skipped
            else
              let status, selection_events = Semgrepignore.select ign ppath in
              match status with
@@ -162,8 +172,9 @@ let walk_skip_and_collect (conf : conf) (ign : Semgrepignore.t)
                      Out.path = !!fpath;
                      reason;
                      details =
-                       "excluded by --include/--exclude, gitignore, or \
-                        semgrepignore";
+                       Some
+                         "excluded by --include/--exclude, gitignore, or \
+                          semgrepignore";
                      rule_id = None;
                    }
                  in

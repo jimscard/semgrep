@@ -46,14 +46,14 @@ let profile_mini_rules = ref false
  *)
 let (last_matched_rule : Mini_rule.t option ref) = ref None
 
-let set_last_matched_rule rule f =
+let set_last_matched_rule (rule : Mini_rule.t) f =
   last_matched_rule := Some rule;
   (* note that if this raise an exn, last_matched_rule will not be
    * reset to None and that's what we want!
    *)
   let res =
     if !profile_mini_rules then
-      Profiling.profile_code ("rule:" ^ (rule.MR.id :> string)) f
+      Profiling.profile_code ("rule:" ^ Rule_ID.to_string rule.id) f
     else f ()
   in
   last_matched_rule := None;
@@ -138,15 +138,13 @@ let (rule_id_of_mini_rule : Mini_rule.t -> Pattern_match.rule_id) =
     message = mr.message;
     pattern_string = mr.pattern_string;
     fix = mr.fix;
-    languages = mr.languages;
+    langs = mr.langs;
   }
 
-let match_rules_and_recurse lang config (file, hook, matches) rules matcher k
-    any x =
+let match_rules_and_recurse m_env (file, hook, matches) rules matcher k any x =
   rules
   |> List.iter (fun (pattern, rule) ->
-         let env = MG.empty_environment lang config in
-         let matches_with_env = matcher rule pattern x env in
+         let matches_with_env = matcher rule pattern x m_env in
          if matches_with_env <> [] then
            (* Found a match *)
            matches_with_env
@@ -175,7 +173,8 @@ let match_rules_and_recurse lang config (file, hook, matches) rules matcher k
                           (* This will be overrided later on by the Pro engine, if this is
                              from a Pro run.
                           *)
-                          engine_kind = OSS;
+                          engine_kind = `OSS;
+                          validation_state = No_validator;
                         }
                       in
                       Common.push pm matches;
@@ -215,6 +214,10 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
   if rules = [] then []
   else
     let matches = ref [] in
+    (* Our matching environment. We can augment this with new information based on the AST,
+     * but we should only need to create it once.
+     *)
+    let m_env = MG.environment_of_program lang config ast in
 
     (* old: let prog = Normalize_AST.normalize (Pr ast) lang in
        * we were rewriting code, e.g., A != B was rewritten as !(A == B),
@@ -307,7 +310,15 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
                        (show_expr_kind x.e);
                      ()
                  | Some range_loc when range_filter range_loc ->
-                     let env = MG.empty_environment ~mvar_context lang config in
+                     let env =
+                       {
+                         m_env with
+                         mv =
+                           (match mvar_context with
+                           | None -> []
+                           | Some mvs -> mvs);
+                       }
+                     in
                      let matches_with_env = match_e_e rule pattern x env in
                      if matches_with_env <> [] then
                        (* Found a match *)
@@ -326,7 +337,8 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
                                   range_loc;
                                   tokens;
                                   taint_trace = None;
-                                  engine_kind = OSS;
+                                  engine_kind = `OSS;
+                                  validation_state = No_validator;
                                 }
                               in
                               Common.push pm matches;
@@ -355,8 +367,7 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
           let visit_stmt () =
             !stmt_rules
             |> List.iter (fun (pattern, rule) ->
-                   let env = MG.empty_environment lang config in
-                   let matches_with_env = match_st_st rule pattern x env in
+                   let matches_with_env = match_st_st rule pattern x m_env in
                    if matches_with_env <> [] then
                      (* Found a match *)
                      matches_with_env
@@ -385,7 +396,8 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
                                     range_loc;
                                     tokens;
                                     taint_trace = None;
-                                    engine_kind = OSS;
+                                    engine_kind = `OSS;
+                                    validation_state = No_validator;
                                   }
                                 in
                                 Common.push pm matches;
@@ -407,8 +419,9 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
           !stmts_rules
           |> List.iter (fun (pattern, rule) ->
                  Profiling.profile_code "Semgrep_generic.kstmts" (fun () ->
-                     let env = MG.empty_environment lang config in
-                     let matches_with_env = match_sts_sts rule pattern x env in
+                     let matches_with_env =
+                       match_sts_sts rule pattern x m_env
+                     in
                      if matches_with_env <> [] then
                        (* Found a match *)
                        matches_with_env
@@ -430,7 +443,8 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
                                       range_loc;
                                       tokens;
                                       taint_trace = None;
-                                      engine_kind = OSS;
+                                      engine_kind = `OSS;
+                                      validation_state = No_validator;
                                     }
                                   in
                                   Common.push pm matches;
@@ -438,33 +452,33 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
           super#v_stmts env x
 
         method! visit_type_ env x =
-          match_rules_and_recurse lang config (file, hook, matches) !type_rules
+          match_rules_and_recurse m_env (file, hook, matches) !type_rules
             match_t_t (super#visit_type_ env)
             (fun x -> T x)
             x
 
         method! visit_pattern env x =
-          match_rules_and_recurse lang config (file, hook, matches)
-            !pattern_rules match_p_p (super#visit_pattern env)
+          match_rules_and_recurse m_env (file, hook, matches) !pattern_rules
+            match_p_p (super#visit_pattern env)
             (fun x -> P x)
             x
 
         method! visit_attribute env x =
-          match_rules_and_recurse lang config (file, hook, matches)
-            !attribute_rules match_at_at
+          match_rules_and_recurse m_env (file, hook, matches) !attribute_rules
+            match_at_at
             (super#visit_attribute env)
             (fun x -> At x)
             x
 
         method! visit_xml_attribute env x =
-          match_rules_and_recurse lang config (file, hook, matches)
+          match_rules_and_recurse m_env (file, hook, matches)
             !xml_attribute_rules match_xml_attribute_xml_attribute
             (super#visit_xml_attribute env)
             (fun x -> XmlAt x)
             x
 
         method! visit_field env x =
-          match_rules_and_recurse lang config (file, hook, matches) !fld_rules
+          match_rules_and_recurse m_env (file, hook, matches) !fld_rules
             match_fld_fld (super#visit_field env)
             (fun x -> Fld x)
             x
@@ -498,8 +512,9 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
           |> List.iter (fun (pattern, rule) ->
                  Profiling.profile_code "Semgrep_generic.kfields" (fun () ->
                      let x = Common.map (fun (F x) -> x) x in
-                     let env = MG.empty_environment lang config in
-                     let matches_with_env = match_sts_sts rule pattern x env in
+                     let matches_with_env =
+                       match_sts_sts rule pattern x m_env
+                     in
                      if matches_with_env <> [] then
                        (* Found a match *)
                        matches_with_env
@@ -521,31 +536,32 @@ let check2 ~hook mvar_context range_filter (config, equivs) rules
                                       range_loc;
                                       tokens;
                                       taint_trace = None;
-                                      engine_kind = OSS;
+                                      engine_kind = `OSS;
+                                      validation_state = No_validator;
                                     }
                                   in
                                   Common.push pm matches;
                                   hook pm)));
-          match_rules_and_recurse lang config (file, hook, matches) !flds_rules
+          match_rules_and_recurse m_env (file, hook, matches) !flds_rules
             match_flds_flds (super#v_fields env)
             (fun x -> Flds x)
             x
 
         method! v_partial ~recurse env x =
-          match_rules_and_recurse lang config (file, hook, matches)
-            !partial_rules match_partial_partial
+          match_rules_and_recurse m_env (file, hook, matches) !partial_rules
+            match_partial_partial
             (super#v_partial ~recurse env)
             (fun x -> Partial x)
             x
 
         method! visit_name env x =
-          match_rules_and_recurse lang config (file, hook, matches) !name_rules
+          match_rules_and_recurse m_env (file, hook, matches) !name_rules
             match_name_name (super#visit_name env)
             (fun x -> Name x)
             x
 
         method! visit_raw_tree env x =
-          match_rules_and_recurse lang config (file, hook, matches) !raw_rules
+          match_rules_and_recurse m_env (file, hook, matches) !raw_rules
             match_raw_raw (super#visit_raw_tree env)
             (fun x -> Raw x)
             x

@@ -31,6 +31,7 @@ class JsonFormatter(BaseFormatter):
             metavars=rule_match.match.extra.metavars,
             dataflow_trace=rule_match.dataflow_trace,
             engine_kind=rule_match.match.extra.engine_kind,
+            validation_state=rule_match.match.extra.validation_state,
         )
 
         if rule_match.extra.get("sca_info"):
@@ -63,17 +64,21 @@ class JsonFormatter(BaseFormatter):
         extra: Mapping[str, Any],
         is_ci_invocation: bool,
     ) -> str:
+        # Sort according to RuleMatch.get_ordering_key
+        sorted_findings = sorted(rule_matches)
         # Note that extra is not used here! Every part of the JSON output should
         # be specified in semgrep_output_v1.atd and be part of CliOutputExtra
         output = out.CliOutput(
             version=out.Version(__VERSION__),
             results=[
-                self._rule_match_to_CliMatch(rule_match) for rule_match in rule_matches
+                self._rule_match_to_CliMatch(rule_match)
+                for rule_match in sorted_findings
             ],
             errors=[error.to_CliError() for error in semgrep_structured_errors],
             paths=cli_output_extra.paths,
             time=cli_output_extra.time,
             explanations=cli_output_extra.explanations,
+            skipped_rules=[],  # TODO: concatenate skipped_rules field from core responses
         )
         # Sort keys for predictable output. This helps with snapshot tests, etc.
         return json.dumps(output.to_json(), sort_keys=True, default=to_json)

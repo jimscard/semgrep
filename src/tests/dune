@@ -1,5 +1,6 @@
 (test
  (name test)
+ (action (run %{exe:test.exe})); Ensure we're running the native binary
  (libraries
     commons
     process_limits
@@ -17,14 +18,13 @@
     semgrep.parsing_languages
     semgrep.matching
     semgrep.synthesizing
-    semgrep.reporting
     semgrep.engine
-    semgrep.language_server
     parser_python.menhir parser_python.ast_generic
     semgrep.data
 
-    osemgrep_targeting
+    osemgrep_language_server
   )
+ (modes native byte) ; bytecode here for debugging
  (preprocess
    (pps
       ppx_deriving.show

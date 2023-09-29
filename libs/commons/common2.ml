@@ -2939,6 +2939,15 @@ let lfile_exists filename =
   with
   | Unix.Unix_error (Unix.ENOENT, _, _) -> false
 
+(* Helps avoid the `Fatal error: exception Unix_error: No such file or directory stat` *)
+let dir_exists path =
+  try
+    match (Unix.lstat path).Unix.st_kind with
+    | S_DIR -> true
+    | _ -> false
+  with
+  | Unix.Unix_error (Unix.ENOENT, _, _) -> false
+
 let is_directory file = (unix_stat file).Unix.st_kind =*= Unix.S_DIR
 let is_file file = (unix_stat file).Unix.st_kind =*= Unix.S_REG
 let is_symlink file = (Unix.lstat file).Unix.st_kind =*= Unix.S_LNK
@@ -3033,10 +3042,25 @@ let unixname () =
   let entry = Unix.getpwuid uid in
   entry.Unix.pw_name
 
-(* dont forget that cmd_to_list call bash and so pattern may contain
- * '*' symbols that will be expanded, so can do  glob "*.c"
- *)
-let glob pattern = cmd_to_list ("ls -1 " ^ pattern)
+(** [dir_contents] returns the paths of all regular files that are
+ * contained in [dir]. Each file is a path starting with [dir].
+  *)
+let dir_contents dir =
+  let rec loop result = function
+    | f :: fs when Sys.is_directory f ->
+        Sys.readdir f |> Array.to_list
+        |> List.filter Sys.file_exists
+        |> List.map (Filename.concat f)
+        |> List.append fs |> loop result
+    | f :: fs -> loop (f :: result) fs
+    | [] -> result
+  in
+  loop [] [ dir ]
+
+let glob pattern =
+  let regex = pattern |> Re.Glob.glob |> Re.compile in
+  let files = dir_contents "." in
+  files |> List.filter (fun s -> Re.execp regex s)
 
 let dirs_of_dir dir =
   assert (is_directory dir);

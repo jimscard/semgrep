@@ -30,7 +30,6 @@ from semgrep.error import SemgrepCoreError
 from semgrep.error import SemgrepError
 from semgrep.formatter.base import BaseFormatter
 from semgrep.rule import Rule
-from semgrep.rule import RuleProduct
 from semgrep.rule_match import RuleMatch
 from semgrep.semgrep_types import LANGUAGE
 from semgrep.semgrep_types import Language
@@ -56,13 +55,16 @@ else:
 FINDINGS_INDENT_DEPTH = 10
 
 
-GROUP_TITLES: Dict[Tuple[RuleProduct, str], str] = {
-    (RuleProduct.sca, "unreachable"): "Unreachable Supply Chain Finding",
-    (RuleProduct.sca, "undetermined"): "Undetermined Supply Chain Finding",
-    (RuleProduct.sca, "reachable"): "Reachable Supply Chain Finding",
-    (RuleProduct.sast, "nonblocking"): "Non-blocking Code Finding",
-    (RuleProduct.sast, "blocking"): "Blocking Code Finding",
-    (RuleProduct.sast, "merged"): "Code Finding",
+GROUP_TITLES: Dict[Tuple[out.Product, str], str] = {
+    (out.Product(out.SCA()), "unreachable"): "Unreachable Supply Chain Finding",
+    (out.Product(out.SCA()), "undetermined"): "Undetermined Supply Chain Finding",
+    (out.Product(out.SCA()), "reachable"): "Reachable Supply Chain Finding",
+    (out.Product(out.SAST()), "nonblocking"): "Non-blocking Code Finding",
+    (out.Product(out.SAST()), "blocking"): "Blocking Code Finding",
+    (out.Product(out.SAST()), "merged"): "Code Finding",
+    (out.Product(out.Secrets()), "valid"): "Valid Secrets Finding",
+    (out.Product(out.Secrets()), "invalid"): "Invalid Secrets Finding",
+    (out.Product(out.Secrets()), "unvalidated"): "Unvalidated Secrets Finding",
 }
 
 
@@ -239,7 +241,7 @@ def match_to_lines(
 
 def call_trace_to_lines(
     ref_path: Path,
-    call_trace: out.CliMatchCallTrace,
+    call_trace: out.MatchCallTrace,
     color_output: bool,
     per_finding_max_lines_limit: Optional[int],
     per_line_max_chars_limit: Optional[int],
@@ -309,7 +311,7 @@ def call_trace_to_lines(
 
 def dataflow_trace_to_lines(
     rule_match_path: Path,
-    dataflow_trace: Optional[out.CliMatchDataflowTrace],
+    dataflow_trace: Optional[out.MatchDataflowTrace],
     color_output: bool,
     per_finding_max_lines_limit: Optional[int],
     per_line_max_chars_limit: Optional[int],
@@ -383,7 +385,7 @@ def get_details_shortlink(rule_match: RuleMatch) -> Optional[str]:
 
 
 def print_time_summary(
-    time_data: out.CliTiming, error_output: Sequence[SemgrepError]
+    time_data: out.Profile, error_output: Sequence[SemgrepError]
 ) -> None:
     items_to_show = 5
     col_lim = 50
@@ -393,7 +395,7 @@ def print_time_summary(
     # Compute summary timings
     rule_parsing_time = time_data.rules_parse_time
     rule_match_timings = {
-        rule.id.value: sum(t.match_times[i] for t in targets if t.match_times[i] >= 0)
+        rule.value: sum(t.match_times[i] for t in targets if t.match_times[i] >= 0)
         for i, rule in enumerate(time_data.rules)
     }
     file_parsing_time = sum(
@@ -549,8 +551,10 @@ def print_text_output(
     dataflow_traces: bool,
 ) -> None:
     last_file = None
+    last_rule_id = None
     last_message = None
-    sorted_rule_matches = sorted(rule_matches, key=lambda r: (r.path, r.rule_id))
+    # Sort the findings according to RuleMatch.get_ordering_key()
+    sorted_rule_matches = sorted(rule_matches)
     for rule_index, rule_match in enumerate(sorted_rule_matches):
         current_file = rule_match.path
         message = rule_match.message
@@ -570,12 +574,18 @@ def print_text_output(
                     else ""
                 )
             )
+            last_rule_id = None
             last_message = None
         # don't display the rule line if the check is empty
         if (
             rule_match.rule_id
             and rule_match.rule_id != CLI_RULE_ID
-            and (last_message is None or last_message != message)
+            and (
+                last_rule_id is None
+                or last_rule_id != rule_match.rule_id
+                or last_message is None
+                or last_message != message
+            )
         ):
             shortlink = get_details_shortlink(rule_match)
             shortlink_text = (8 * " " + shortlink + "\n") if shortlink else ""
@@ -610,7 +620,12 @@ def print_text_output(
         elif (
             "sca_info" in rule_match.extra
             and "sca-fix-versions" in rule_match.metadata
-            and (last_message is None or last_message != message)
+            and (
+                last_rule_id is None
+                or last_rule_id != rule_match.rule_id
+                or last_message is None
+                or last_message != message
+            )
         ):
             # this is a list of objects like [{'minimist': '0.2.4'}, {'minimist': '1.2.6'}]
             fixes = rule_match.metadata["sca-fix-versions"]
@@ -635,6 +650,7 @@ def print_text_output(
             )
 
         last_file = current_file
+        last_rule_id = rule_match.rule_id
         last_message = message
         next_rule_match = (
             sorted_rule_matches[rule_index + 1]
@@ -693,26 +709,40 @@ class TextFormatter(BaseFormatter):
     ) -> str:
         # all output in this function is captured and returned as a string
         with force_quiet_off(console), console.capture() as captured_output:
-            grouped_matches: Dict[Tuple[RuleProduct, str], List[RuleMatch]] = {
+            grouped_matches: Dict[Tuple[out.Product, str], List[RuleMatch]] = {
                 # ordered most important to least important
-                (RuleProduct.sast, "blocking"): [],
-                (RuleProduct.sca, "reachable"): [],
-                (RuleProduct.sca, "undetermined"): [],
-                (RuleProduct.sca, "unreachable"): [],
-                (RuleProduct.sast, "nonblocking"): [],
+                (out.Product(out.SAST()), "blocking"): [],
+                (out.Product(out.SCA()), "reachable"): [],
+                (out.Product(out.Secrets()), "valid"): [],
+                (out.Product(out.SCA()), "undetermined"): [],
+                (out.Product(out.Secrets()), "unvalidated"): [],
+                (out.Product(out.SCA()), "unreachable"): [],
+                (out.Product(out.SAST()), "nonblocking"): [],
+                (out.Product(out.Secrets()), "invalid"): [],
             }
 
             for match in rule_matches:
-                if match.product == RuleProduct.sast:
+                if isinstance(match.product.value, out.SAST):
                     subgroup = "blocking" if match.is_blocking else "nonblocking"
+                elif isinstance(match.product.value, out.Secrets):
+                    state = match.validation_state
+                    if state is None:
+                        subgroup = "unvalidated"
+                    else:
+                        if isinstance(state.value, out.CONFIRMEDVALID):
+                            subgroup = "valid"
+                        elif isinstance(state.value, out.CONFIRMEDINVALID):
+                            subgroup = "invalid"
+                        else:
+                            subgroup = "unvalidated"
                 else:
                     subgroup = match.exposure_type or "undetermined"
 
                 grouped_matches[match.product, subgroup].append(match)
 
             first_party_blocking_rules = {
-                match.match.rule_id.value
-                for match in grouped_matches[RuleProduct.sast, "blocking"]
+                match.match.check_id.value
+                for match in grouped_matches[out.Product(out.SAST()), "blocking"]
             }
 
             # When ephemeral rules are run with the -e or --pattern flag in the command-line, the rule_id is set to -.
@@ -720,9 +750,9 @@ class TextFormatter(BaseFormatter):
             first_party_blocking_rules.discard("-")
 
             if not is_ci_invocation:
-                grouped_matches[(RuleProduct.sast, "merged")] = [
-                    *grouped_matches.pop((RuleProduct.sast, "nonblocking")),
-                    *grouped_matches.pop((RuleProduct.sast, "blocking")),
+                grouped_matches[(out.Product(out.SAST()), "merged")] = [
+                    *grouped_matches.pop((out.Product(out.SAST()), "nonblocking")),
+                    *grouped_matches.pop((out.Product(out.SAST()), "blocking")),
                 ]
 
             for group, matches in grouped_matches.items():

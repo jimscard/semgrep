@@ -58,7 +58,7 @@ The following never leave your environment and are not sent or shared with anyon
 The following data will never leave your environment as part of metrics.
 
 - Filenames
-- Git commit hashes, messages, authors
+- Git commit hashes, timestamps, messages, authors
 - User-identifiable data about Semgrep’s findings in your code, including finding messages
 
 This data will be sent to Semgrep App only if you explicitly request it,
@@ -193,21 +193,23 @@ Semgrep, Inc will:
 
 > `anonymous_user_id: "5f52484c-3f82-4779-9353-b29bbd3193b6"`
 
-This ID is stored in the `~/.semgrep/settings.yml` file.
-If the ID disappears, the next run will generate a new one randomly.
-The Semgrep team uses this to answer the following questions:
+Semgrep generates a new random UUID and saves the ID locally to a `~/.semgrep/settings.yml` file
+when the ID is not present to help improve Semgrep products.
+
+The Semgrep team uses this ID to help answer the following questions:
 
 - > How many people use a given rule/ruleset/snippet?
 
-  This helps our security researchers assess their performance,
+  This enables the Semgrep team to assess their performance,
   and we're planning to make these numbers public for all rule authors in the community.
 
-- > What percentage of users log in?"
+- > What percentage of users log in?
 
-  We use this to evaluate our success as we build new authenticated features on Semgrep App.
+  We use this to evaluate our success as we build new authenticated features for the Semgrep Cloud Platform.
 
-This ID will only ever be sent with Semgrep's metrics collection endpoint,
-meaning it cannot be used to track users across the web.
+- > How often are individual subcommands and CLI features used?
+
+  This helps our product and developer experience teams measure feature adoption rate, analyze anonymized usage, and compare cohort behavior to improve our product offerings.
 
 ### Feature usage
 
@@ -328,7 +330,7 @@ The classes of scan data are:
 - Project identity (e.g., name, URL)
 - Scan environment (e.g., CI provider, OS)
 - Author identity (e.g., committer email)
-- Commit metadata (e.g., commit hash)
+- Commit metadata (e.g., commit hash and timestamp)
 - Review and review-requester identifying data (e.g., pull-request ID, branch, merge base, request author)
 - Scan metadata, including type of scan and scan parameters (e.g., paths scanned and extensions of ignored files)
 - Timing metrics (e.g., time taken to scan per-rule and per-path)

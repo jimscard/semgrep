@@ -87,14 +87,21 @@ let run (conf : conf) : Exit_code.t =
          *)
         let targets =
           rules_and_origin
-          |> Common.map_filter (fun x ->
-                 (* TODO: stricter: warn if no origin (meaning URL or registry) *)
-                 x.Rule_fetching.origin)
+          |> Common.map_filter (fun (x : Rule_fetching.rules_and_origin) ->
+                 match x.origin with
+                 | Local_file path -> Some path
+                 | Other_origin ->
+                     (* TODO: stricter: warn if no origin (meaning URL or registry) *)
+                     None)
+        in
+        let in_docker = !Semgrep_envvars.v.in_docker in
+        let (config : Rules_config.t) =
+          Rules_config.parse_config_string ~in_docker metarules_pack
         in
         let metarules_and_origin =
           Rule_fetching.rules_from_dashdash_config ~token_opt
-            ~registry_caching:false
-            (Semgrep_dashdash_config.parse_config_string metarules_pack)
+            ~rewrite_rule_ids:true (* default *)
+            ~registry_caching:false config
         in
         let metarules, metaerrors =
           Rule_fetching.partition_rules_and_errors metarules_and_origin
@@ -102,16 +109,19 @@ let run (conf : conf) : Exit_code.t =
         if metaerrors <> [] then
           Error.abort (spf "error in metachecks! please fix %s" metarules_pack);
 
-        let exn_and_matches =
-          Core_runner.invoke_semgrep_core conf.core_runner_conf metarules []
-            targets
+        let scan_func =
+          Core_runner.mk_scan_func_for_osemgrep Core_scan.scan_with_exn_handler
         in
-        let res = Core_runner.create_core_result metarules exn_and_matches in
+        let result_and_exn =
+          scan_func conf.core_runner_conf metarules [] targets
+        in
+        let res = Core_runner.create_core_result metarules result_and_exn in
 
         (* TODO? sanity check errors below too? *)
         let { Out.results; errors = _; _ } =
           Cli_json_output.cli_output_of_core_results
-            ~logging_level:conf.common.logging_level res
+            ~logging_level:conf.common.logging_level res.core res.hrules
+            res.scanned
         in
         (* TOPORT?
                 ... run -check_rules in semgrep-core ...

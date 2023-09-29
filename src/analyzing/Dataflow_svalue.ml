@@ -406,18 +406,33 @@ let no_cycles_in_svalue (id_info : G.id_info) svalue =
      * we can have a single visitor for all calls, given that the old
      * `mk_visitor` was pretty expensive, and constructing a visitor object may
      * be as well. *)
+    let i = ref 0 in
     let ff = ref (fun _ -> assert false) in
     let ok = ref true in
     let vout =
-      object
-        inherit [_] G.iter
+      object (self : 'self)
+        inherit [_] G.iter_no_id_info
 
-        method! visit_id_info _env ii =
+        method! visit_id_info env ii =
           ok := !ok && !ff ii;
+          (match !(ii.id_svalue) with
+          | Some (Sym e) when !ok ->
+              (* Following `id_svalue`s can explode in pathological cases,
+               * see 'tests/rules/sym_prop_explosion.js', so we need to
+               * set a bound. *)
+              if !i < Limits_semgrep.svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK
+              then (
+                incr i;
+                self#visit_expr env e)
+              else ok := false
+          | None
+          | Some _ ->
+              ());
           if not !ok then raise Exit
       end
     in
     fun f ast ->
+      i := 0;
       ff := f;
       ok := true;
       try
@@ -449,9 +464,8 @@ let set_svalue_ref id_info c' =
     match !(id_info.id_svalue) with
     | None -> id_info.id_svalue := Some c'
     | Some c -> id_info.id_svalue := Some (refine c c')
-  else
-    logger#error "Cycle check failed for %s := %s" (G.show_id_info id_info)
-      (G.show_svalue c')
+  else logger#error "Cycle check failed for %s := ..." (G.show_id_info id_info)
+(* (G.show_svalue c') *)
 
 (*****************************************************************************)
 (* Transfer *)
@@ -519,6 +533,58 @@ let update_env_with env var sval =
   | G.NotCst -> VarMap.remove (str_of_name var) env
   | __else__ -> VarMap.add (str_of_name var) sval env
 
+let transfer_of_equality (assume : bool) (var : IL.name) (lit : G.literal)
+    (inp : G.svalue Var_env.t) : G.svalue Var_env.t =
+  (* If we assume `var == lit` then we can infer `var = lit`. *)
+  if assume then update_env_with inp var (Lit lit)
+  else
+    (* If we believed `var == lit` but now we have to assume `var != lit`, then
+     * our believe was wrong, fix it. *)
+    let key = str_of_name var in
+    match VarMap.find_opt key inp with
+    | Some (Lit lit') when eq_literal lit lit' -> VarMap.remove key inp
+    | None
+    | Some _ ->
+        inp
+
+let rec transfer_of_assume (assume : bool) (cond : IL.exp_kind)
+    (inp : G.svalue Var_env.t) : G.svalue Var_env.t =
+  match cond with
+  | Operator
+      ( (Eq, _),
+        ( [
+            Unnamed { e = Fetch { base = Var var; rev_offset = [] }; _ };
+            Unnamed { e = Literal lit; _ };
+          ]
+        | [
+            Unnamed { e = Literal lit; _ };
+            Unnamed { e = Fetch { base = Var var; rev_offset = [] }; _ };
+          ] ) ) ->
+      (* x == lit *)
+      transfer_of_equality assume var lit inp
+  | Operator ((NotEq, tok), ([ _; _ ] as args)) ->
+      (* E1 != E2 *)
+      transfer_of_assume (not assume) (Operator ((Eq, tok), args)) inp
+  | Operator
+      ( (Not, _),
+        [ Unnamed { e = Fetch { base = Var var; rev_offset = [] }; _ } ] ) -> (
+      (* `if (!ptr) { ... }` when `ptr` has pointer type *)
+      match !(var.id_info.id_type) with
+      | Some { t = TyPointer _; _ } ->
+          let tok = snd var.ident in
+          let lit = G.Null tok in
+          transfer_of_equality assume var lit inp
+      | Some _
+      | None ->
+          inp)
+  | Fetch { base = Var var; rev_offset = [] } ->
+      (* if (E) { ... } *)
+      let tok = snd var.ident in
+      transfer_of_assume (not assume)
+        (Operator ((Not, tok), [ Unnamed { e = cond; eorig = NoOrig } ]))
+        inp
+  | __else__ -> inp
+
 let transfer :
     lang:Lang.t ->
     enter_env:G.svalue Var_env.t ->
@@ -535,8 +601,6 @@ let transfer :
     match node.F.n with
     | Enter
     | Exit
-    | TrueNode
-    | FalseNode
     | Join
     | NCond _
     | NGoto _
@@ -546,6 +610,8 @@ let transfer :
     | NOther _
     | NTodo _ ->
         inp'
+    | TrueNode cond -> transfer_of_assume true cond.e inp'
+    | FalseNode cond -> transfer_of_assume false cond.e inp'
     | NInstr instr -> (
         (* TODO: For now we only handle the simplest cases. *)
         match instr.i with

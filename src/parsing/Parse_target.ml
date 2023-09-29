@@ -18,9 +18,8 @@ open File.Operators
 open Pfff_or_tree_sitter
 open Parsing_result2
 module Flag = Flag_semgrep
-module E = Semgrep_error_code
-module Out = Output_from_core_t
-module OutH = Output_from_core_util
+module E = Core_error
+module Out = Semgrep_output_v1_t
 
 let logger = Logging.get_logger [ __MODULE__ ]
 
@@ -42,12 +41,14 @@ let logger = Logging.get_logger [ __MODULE__ ]
 (* used by Match_search_mode and Match_tainting_mode *)
 let errors_from_skipped_tokens xs =
   match xs with
-  | [] -> Report.ErrorSet.empty
+  | [] -> Core_error.ErrorSet.empty
   | x :: _ ->
       let e = exn_of_loc x in
-      let err = E.exn_to_error x.Tok.pos.file e in
-      let locs = xs |> Common.map OutH.location_of_token_location in
-      Report.ErrorSet.singleton { err with typ = Out.PartialParsing locs }
+      let err = E.exn_to_error None x.Tok.pos.file e in
+      let locs =
+        xs |> Common.map Semgrep_output_utils.location_of_token_location
+      in
+      Core_error.ErrorSet.singleton { err with typ = Out.PartialParsing locs }
 
 let undefined_just_parse_with_lang _lang _file =
   failwith "just_parse_with_lang_ref unset"
@@ -125,7 +126,10 @@ let parse_and_resolve_name_warn_if_partial lang file =
 
 let parse_and_resolve_name_fail_if_partial lang file =
   let { ast; skipped_tokens; _ } = parse_and_resolve_name lang file in
-  if skipped_tokens <> [] then failwith (spf "fail to fully parse %s" file);
+  if skipped_tokens <> [] then
+    failwith
+      (spf "fail to fully parse %s\n missing tokens:\n%s" file
+         (String.concat "\n" (Common.map Tok.show_location skipped_tokens)));
   ast
 
 (*****************************************************************************)

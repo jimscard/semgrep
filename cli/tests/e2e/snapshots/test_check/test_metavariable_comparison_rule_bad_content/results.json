@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/basic/inside.py",
       "targets/basic/metavariable-comparison-bad-content.py",
@@ -17,5 +16,6 @@
     ]
   },
   "results": [],
+  "skipped_rules": [],
   "version": "0.42"
 }

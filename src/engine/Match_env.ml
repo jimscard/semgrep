@@ -13,8 +13,8 @@
  * LICENSE for more details.
  *)
 open File.Operators
-module E = Semgrep_error_code
-module Out = Output_from_core_t
+module E = Core_error
+module Out = Semgrep_output_v1_t
 module PM = Pattern_match
 
 (*****************************************************************************)
@@ -60,7 +60,7 @@ type env = {
   rule : Rule.t;
   (* problems found during evaluation, one day these may be caught earlier by
    * the meta-checker *)
-  errors : Report.ErrorSet.t ref;
+  errors : Core_error.ErrorSet.t ref;
 }
 
 (*****************************************************************************)
@@ -76,18 +76,18 @@ let error env msg =
   let loc = Tok.first_loc_of_file !!(env.xtarget.Xtarget.file) in
   (* TODO: warning or error? MatchingError or ... ? *)
   let err =
-    E.mk_error ~rule_id:(Some (fst env.rule.Rule.id)) loc msg Out.MatchingError
+    E.mk_error (Some (fst env.rule.Rule.id)) loc msg Out.MatchingError
   in
-  env.errors := Report.ErrorSet.add err !(env.errors)
+  env.errors := Core_error.ErrorSet.add err !(env.errors)
 
 (* this will be adjusted later in range_to_pattern_match_adjusted *)
 let fake_rule_id (id, str) =
   {
-    PM.id = Rule.ID.of_string (string_of_int id);
+    PM.id = Rule_ID.of_string (string_of_int id);
     pattern_string = str;
     message = "";
     fix = None;
-    languages = [];
+    langs = [];
   }
 
 let adjust_xconfig_with_rule_options xconf options =
