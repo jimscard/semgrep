@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/basic/inside.py",
       "targets/basic/metavariable-comparison-bad-content.py",
@@ -46,7 +45,8 @@
             }
           }
         },
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/metavariable-comparison-strip.py",
       "start": {
@@ -56,5 +56,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

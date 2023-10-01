@@ -34,7 +34,7 @@ def determine_semgrep_pro_path() -> Path:
         logger.info(
             "Could not find `semgrep-core` executable so not sure where to install DeepSemgrep"
         )
-        logger.info("There is something wrong with your semgrep installtation")
+        logger.info("There is something wrong with your semgrep installation")
         sys.exit(FATAL_EXIT_CODE)
 
     semgrep_pro_path = Path(core_path).parent / "semgrep-core-proprietary"
@@ -54,7 +54,7 @@ def run_install_semgrep_pro() -> None:
         logger.info(f"Overwriting Semgrep Pro Engine already installed!")
 
     if state.app_session.token is None:
-        logger.info("run `semgrep login` before using `semgrep install`")
+        logger.info("run `semgrep login` before running `semgrep install-semgrep-pro`")
         sys.exit(INVALID_API_KEY_EXIT_CODE)
 
     if sys.platform.startswith("darwin"):
@@ -139,14 +139,14 @@ def run_install_semgrep_pro() -> None:
         if semgrep_pro_path_tmp.exists():
             semgrep_pro_path_tmp.unlink()
         abort(
-            "Downloaded binary failed version check, try again or contact support@r2c.dev"
+            "Downloaded binary failed version check, try again or contact support@semgrep.com"
         )
 
     # Version check worked so we now install the binary
     if semgrep_pro_path.exists():
         semgrep_pro_path.unlink()
     semgrep_pro_path_tmp.rename(semgrep_pro_path)
-    logger.info(f"Successfully installed Semgrep Pro Engine (version {version})!")
+    logger.info(f"\nSuccessfully installed Semgrep Pro Engine (version {version})!")
 
 
 @click.command()

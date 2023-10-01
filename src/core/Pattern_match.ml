@@ -1,6 +1,6 @@
 (* Yoann Padioleau
  *
- * Copyright (C) 2019-2021 r2c
+ * Copyright (C) 2019-2023 Semgrep Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -76,7 +76,20 @@ type taint_trace_item = {
 [@@deriving show, eq]
 
 type taint_trace = taint_trace_item list [@@deriving show, eq]
-type engine_kind = OSS | Pro [@@deriving show, eq]
+
+(* This type is used by postprocessors to report back the validity
+   of a finding. No_validator is currently also used when no
+   validation has yet occurred, which if that becomes confusing we
+   could adjust that, by adding another state. This corresponds to
+   a identically named type in semgrep_interfaces output types.
+   TODO: reuse semgrep_output_v1 validation_state type directly
+*)
+type validation_state =
+  | Confirmed_valid
+  | Confirmed_invalid
+  | Validation_error
+  | No_validator
+[@@deriving show, eq]
 
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
@@ -97,18 +110,22 @@ type t = {
      We now rely on equality of taint traces, which in turn relies on equality of `Parse_info.t`.
   *)
   taint_trace : taint_trace Lazy.t option;
-  (* This is a flag indicating whether this match was produced during a run of Semgrep PRO.
-     This will be overrided later by the Pro engine, on any matches which are produced
-     from a Pro run.
-  *)
-  engine_kind : engine_kind;
+  (* Indicates whether this match was produced during a run
+   * of Semgrep PRO. This will be overrided later by the Pro engine, on any
+   * matches which are produced from a Pro run.
+   * TODO? do we want to consider the same match but with different engine
+   * as separate matches? or better make them equal for dedup purpose?
+   *)
+  engine_kind : Engine_kind.t; [@equal fun _a _b -> true]
+  (* Indicates whether a postprocessor ran and validated this result. *)
+  validation_state : validation_state;
 }
 
 (* This is currently a record, but really only the rule id should matter.
  *
  * We could derive information in the other fields from the id, but that
  * would require to pass around the list of rules to get back the
- * information. Instead by embedding the information in the pattern match,
+ * information. Instead, by embedding the information in the pattern match,
  * some functions are simpler (we use the same trick with Parse_info.t
  * where for example we embed the filename in it, not just a position).
  * alt: reuse Mini_rule.t
@@ -120,14 +137,15 @@ and rule_id = {
    * Note that when we process a full rule, this id can temporarily
    * contain a Rule.pattern_id.
    *)
-  id : Rule.ID.t;
+  id : Rule_ID.t;
   (* other parts of a rule (or mini_rule) used in JSON_report.ml.
    *
    * TODO should we remove these fields and just pass around a Rule.t or
    * mini_rule? *)
   message : string;
   fix : string option;
-  languages : Lang.t list;
+  (* ?? why we need that? *)
+  langs : Lang.t list;
   (* used for debugging (could be removed at some point) *)
   pattern_string : string;
 }
@@ -176,12 +194,12 @@ let no_submatches pms =
   tbl |> Hashtbl.to_seq_values |> Seq.flat_map List.to_seq |> List.of_seq
   [@@profiling]
 
-let to_proprietary pm = { pm with engine_kind = Pro }
+let to_proprietary pm = { pm with engine_kind = `PRO }
 
 (* This special Set is used in the dataflow tainting code,
    which manipulates sets of matches associated to each variables.
-   We only care about the metavariable environment carried by the pattern matches
-   at the moment.
+   We only care about the metavariable environment carried by the pattern
+   matches at the moment.
 *)
 module Set = Set.Make (struct
   type previous_t = t
@@ -189,10 +207,13 @@ module Set = Set.Make (struct
   (* alt: use type nonrec t = t, but this causes pad's codegraph to blowup *)
   type t = previous_t
 
-  (* If the pattern matches are obviously different (have different ranges), this is enough to compare them.
-     If their ranges are the same, compare their metavariable environments. This is not robust to reordering
-     metavariable environments. [("$A",e1);("$B",e2)] is not equal to [("$B",e2);("$A",e1)]. This should be ok
-     but is potentially a source of duplicate findings in taint mode, where these sets are used.
+  (* If the pattern matches are obviously different (have different ranges),
+     this is enough to compare them.
+     If their ranges are the same, compare their metavariable environments.
+     This is not robust to reordering metavariable environments.
+     [("$A",e1);("$B",e2)] is not equal to [("$B",e2);("$A",e1)]. This should
+     be ok but is potentially a source of duplicate findings in taint mode,
+     where these sets are used.
   *)
   let compare pm1 pm2 =
     match compare pm1.range_loc pm2.range_loc with

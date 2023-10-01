@@ -17,11 +17,11 @@ from rich.progress import SpinnerColumn
 from rich.progress import TextColumn
 from rich.table import Table
 
-import semgrep.semgrep_main
+import semgrep.run_scan
+import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.app import auth
 from semgrep.app.scans import ScanHandler
 from semgrep.commands.install import run_install_semgrep_pro
-from semgrep.commands.scan import CONTEXT_SETTINGS
 from semgrep.commands.scan import scan_options
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.console import console
@@ -30,6 +30,7 @@ from semgrep.constants import OutputFormat
 from semgrep.engine import EngineType
 from semgrep.error import FATAL_EXIT_CODE
 from semgrep.error import INVALID_API_KEY_EXIT_CODE
+from semgrep.error import MISSING_CONFIG_EXIT_CODE
 from semgrep.error import SemgrepError
 from semgrep.ignores import IGNORE_FILE_NAME
 from semgrep.meta import generate_meta_from_environment
@@ -54,6 +55,13 @@ ALWAYS_EXCLUDE_PATTERNS = [".semgrep/", ".semgrep_logs/"]
 
 # These patterns are excluded via --exclude unless the user provides their own .semgrepignore
 DEFAULT_EXCLUDE_PATTERNS = ["test/", "tests/", "*_test.go"]
+
+# Conversion of product codes to product names
+PRODUCT_NAMES_MAP = {
+    "sast": "Semgrep Code",
+    "sca": "Semgrep Supply Chain",
+    "secrets": "Semgrep Secrets",
+}
 
 
 def yield_valid_patterns(patterns: Iterable[str]) -> Iterable[str]:
@@ -103,10 +111,10 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     logger.info(f"Not on head ref: {metadata.head_branch_hash}; checking that out now.")
     git_check_output(["git", "checkout", metadata.head_branch_hash])
 
-    atexit.register(git_check_output, ["git", "checkout", stashed_rev])
+    atexit.register(git_check_output, ["git", "checkout", stashed_rev], os.getcwd())
 
 
-@click.command(context_settings=CONTEXT_SETTINGS)
+@click.command()
 @click.pass_context
 @scan_options
 @click.option(
@@ -148,6 +156,15 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     is_flag=True,
     hidden=True,
 )
+@click.option("--code", is_flag=True, hidden=True)
+@click.option("--beta-testing-secrets", is_flag=True, hidden=True)
+@click.option(
+    "--secrets",
+    "run_secrets_flag",
+    is_flag=True,
+    hidden=True,
+    help="Enable support for secret validation. Requires Semgrep Secrets, contact support@semgrep.com for more information this.",
+)
 @click.option(
     "--suppress-errors/--no-suppress-errors",
     "suppress_errors",
@@ -166,9 +183,13 @@ def ci(
     audit_on: Sequence[str],
     autofix: bool,
     baseline_commit: Optional[str],
-    core_opts: Optional[str],
+    # TODO: Remove after October 2023. Left for a error message
+    # redirect to `--secrets` aka run_secrets_flag.
+    beta_testing_secrets: bool,
+    code: bool,
     config: Optional[Tuple[str, ...]],
     debug: bool,
+    diff_depth: int,
     dump_command_for_core: bool,
     dry_run: bool,
     enable_nosem: bool,
@@ -192,6 +213,8 @@ def ci(
     requested_engine: EngineType,
     quiet: bool,
     rewrite_rule_ids: bool,
+    run_secrets_flag: bool,
+    allow_untrusted_postprocessors: bool,
     supply_chain: bool,
     scan_unknown_extensions: bool,
     time_flag: bool,
@@ -250,6 +273,10 @@ def ci(
     else:  # impossible state… until we break the code above
         raise RuntimeError("The token and/or config are misconfigured")
 
+    if beta_testing_secrets:
+        logger.info("Please use --secrets instead of --beta-testing-secrets")
+        sys.exit(FATAL_EXIT_CODE)
+
     output_settings = OutputSettings(
         output_format=output_format,
         output_destination=output,
@@ -285,10 +312,30 @@ def ci(
         # so that metadata of current commit is correct
         if scan_handler:
             console.print(Title("Connection", order=2))
-            metadata_dict = metadata.to_dict()
-            metadata_dict["is_sca_scan"] = supply_chain
-            proj_config = ProjectConfig.load_all()
-            metadata_dict = {**metadata_dict, **proj_config.to_dict()}
+
+            # Build project_metadata
+            project_meta: out.ProjectMetadata = metadata.to_project_metadata()
+            project_meta.is_sca_scan = supply_chain
+            project_meta.is_code_scan = code
+            project_meta.is_secrets_scan = run_secrets_flag
+
+            # TODO: move ProjectConfig to ATD too
+            project_config = ProjectConfig.load_all()
+
+            # Build scan_metadata
+            if code:
+                scan_handler.scan_metadata.requested_products.append(
+                    out.Product(out.SAST())
+                )
+            if supply_chain:
+                scan_handler.scan_metadata.requested_products.append(
+                    out.Product(out.SCA())
+                )
+            if run_secrets_flag:
+                scan_handler.scan_metadata.requested_products.append(
+                    out.Product(out.Secrets())
+                )
+
             with Progress(
                 TextColumn("  {task.description}"),
                 SpinnerColumn(spinner_name="simpleDotsScrolling"),
@@ -300,17 +347,38 @@ def ci(
                     else ""
                 )
 
-                start_scan_task = progress_bar.add_task(
-                    f"Reporting start of scan for [bold]{scan_handler.deployment_name}[/bold]"
+                start_scan_desc = f"Reporting start of scan for [bold]{scan_handler.deployment_name}[/bold]"
+                start_scan_task = progress_bar.add_task(start_scan_desc)
+                scan_handler.start_scan(project_meta, project_config)
+                if scan_handler.scan_id:
+                    start_scan_desc += f" (scan_id={scan_handler.scan_id})"
+                progress_bar.update(
+                    start_scan_task, completed=100, description=start_scan_desc
                 )
-                scan_handler.start_scan(metadata_dict)
-                progress_bar.update(start_scan_task, completed=100)
 
                 connection_task = progress_bar.add_task(
                     f"Fetching configuration from Semgrep Cloud Platform{at_url_maybe}"
                 )
-                scan_handler.fetch_and_init_scan_config(metadata_dict)
+                scan_handler.fetch_and_init_scan_config(project_meta.to_json())
                 progress_bar.update(connection_task, completed=100)
+
+                product_names = [
+                    PRODUCT_NAMES_MAP.get(p) or p for p in scan_handler.enabled_products
+                ]
+                products_str = ", ".join(product_names) or "None"
+                products_task = progress_bar.add_task(
+                    f"Enabled products: [bold]{products_str}[/bold]"
+                )
+                progress_bar.update(products_task, completed=100)
+
+            if (
+                scan_handler.rules == '{"rules":[]}'
+                and scan_handler.enabled_products == ["sast"]
+            ):
+                console.print(
+                    f"No rules configured. Visit {state.env.semgrep_url}/orgs/-/policies to configure rules to scan your code.\n"
+                )
+                sys.exit(MISSING_CONFIG_EXIT_CODE)
 
             config = (scan_handler.rules,)
 
@@ -321,10 +389,23 @@ def ci(
         logger.info(f"Could not start scan {e}")
         sys.exit(FATAL_EXIT_CODE)
 
+    # Handled error outside engine type for more actionable advice.
+    if run_secrets_flag and requested_engine is EngineType.OSS:
+        logger.info(
+            "The --secrets and --oss flags are incompatible. Semgrep Secrets is a proprietary extension of Open Source Semgrep."
+        )
+        sys.exit(FATAL_EXIT_CODE)
+
+    run_secrets = run_secrets_flag or bool(
+        scan_handler and "secrets" in scan_handler.enabled_products
+    )
+
     engine_type = EngineType.decide_engine_type(
         requested_engine=requested_engine,
         scan_handler=scan_handler,
         git_meta=metadata,
+        run_secrets=run_secrets,
+        enable_pro_diff_scan=diff_depth >= 0,
     )
 
     # set default settings for selected engine type
@@ -339,6 +420,8 @@ def ci(
 
     if engine_type.is_pro:
         console.print(Padding(Title("Engine", order=2), (1, 0, 0, 0)))
+        if run_secrets:
+            console.print("Semgrep Secrets requires Semgrep Pro Engine")
         if engine_type.check_if_installed():
             console.print(
                 f"Using Semgrep Pro Version: [bold]{engine_type.get_pro_version()}[/bold]",
@@ -358,6 +441,12 @@ def ci(
         exclude = (*exclude, *yield_exclude_paths(excludes_from_app))
         assert config  # Config has to be defined here. Helping mypy out
         start = time.time()
+
+        if scan_handler and not scan_handler.enabled_products:
+            raise SemgrepError(
+                "No products are enabled for this organization. Please enable a product in the Settings > Deployment tab of Semgrep Cloud Platform or reach out to support@semgrep.com for assistance."
+            )
+
         (
             filtered_matches_by_rule,
             semgrep_errors,
@@ -369,9 +458,11 @@ def ci(
             shown_severities,
             dependencies,
             dependency_parser_errors,
-        ) = semgrep.semgrep_main.main(
-            core_opts_str=core_opts,
+            num_executed_rules,
+            contributions,
+        ) = semgrep.run_scan.run_scan(
             engine_type=engine_type,
+            run_secrets=run_secrets,
             output_handler=output_handler,
             target=[os.curdir],  # semgrep ci only scans cwd
             pattern=None,
@@ -395,9 +486,12 @@ def ci(
             interfile_timeout=interfile_timeout,
             timeout_threshold=timeout_threshold,
             skip_unknown_extensions=(not scan_unknown_extensions),
+            allow_untrusted_postprocessors=allow_untrusted_postprocessors,
             optimizations=optimizations,
             baseline_commit=metadata.merge_base_ref,
             baseline_commit_is_mergebase=True,
+            diff_depth=diff_depth,
+            dump_contributions=True,
         )
     except SemgrepError as e:
         output_handler.handle_semgrep_errors([e])
@@ -479,16 +573,15 @@ def ci(
         ignore_log=ignore_log,
         profiler=profiler,
         filtered_rules=[*blocking_rules, *nonblocking_rules],
-        profiling_data=output_extra.profiling_data,
+        extra=output_extra,
         severities=shown_severities,
         is_ci_invocation=True,
-        rules_by_engine=output_extra.rules_by_engine,
         engine_type=engine_type,
     )
 
     logger.info("CI scan completed successfully.")
     logger.info(
-        f"  Found {unit_str(num_blocking_findings + num_nonblocking_findings, 'finding')} ({num_blocking_findings} blocking) from {unit_str(len(blocking_rules) + len(nonblocking_rules), 'rule')}."
+        f"  Found {unit_str(num_blocking_findings + num_nonblocking_findings, 'finding')} ({num_blocking_findings} blocking) from {unit_str(num_executed_rules, 'rule')}."
     )
 
     app_block_override = False
@@ -511,6 +604,7 @@ def ci(
                 metadata.commit_datetime,
                 dependencies,
                 dependency_parser_errors,
+                contributions,
                 engine_type,
                 progress_bar,
             )

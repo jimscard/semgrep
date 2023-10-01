@@ -1,9 +1,3 @@
-(* Semgrep Pro hook *)
-(* TODO it might be better to pass this through and avoid the hook,
-   but it was fairly annoying to *)
-val invoke_semgrep_core_proprietary :
-  (Fpath.t list -> Engine_type.t -> Core_runner.semgrep_core_runner) option ref
-
 (*
    Parse a semgrep-scan command, execute it and exit.
 
@@ -14,13 +8,24 @@ val invoke_semgrep_core_proprietary :
 val main : string array -> Exit_code.t
 
 (* internal *)
-val run : Scan_CLI.conf -> Exit_code.t
+val run_conf : Scan_CLI.conf -> Exit_code.t
+val run_scan_conf : Scan_CLI.conf -> Exit_code.t
+
+(* Semgrep Pro hook for osemgrep *)
+val hook_pro_scan_func_for_osemgrep :
+  (Fpath.t list ->
+  ?diff_config:Differential_scan_config.t ->
+  Engine_type.t ->
+  Core_runner.scan_func_for_osemgrep)
+  option
+  ref
 
 (* internal: scan all the files - also used in CI *)
-val scan_files :
-  Rule_fetching.rules_and_origin list ->
-  Profiler.t ->
+val run_scan_files :
   Scan_CLI.conf ->
+  Profiler.t ->
+  Rule_fetching.rules_and_origin list ->
+  Fpath.t list * Semgrep_output_v1_t.skipped_target list ->
   ( Rule.rule list * Core_runner.result * Semgrep_output_v1_t.cli_output,
     Exit_code.t )
   result

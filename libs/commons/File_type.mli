@@ -26,6 +26,7 @@ and pl_type =
   | Csharp
   | ObjectiveC of string
   | Swift
+  | Julia
   | Perl
   | Python
   | Ruby
@@ -36,13 +37,11 @@ and pl_type =
   | Rust
   | Beta
   | Pascal
-  | Web of webpl_type
   | Haxe
-  | Opa
-  | Flash
   | Bytecode of string
   | Asm
-  | Thrift
+  | Web of webpl_type
+  | IDL of idl_type
   | MiscPL of string
 
 and config_type =
@@ -53,6 +52,7 @@ and config_type =
   | Yaml
   | Terraform
   | Sexp
+  | Toml
 
 and lisp_type = CommonLisp | Elisp | Scheme | Clojure
 
@@ -66,8 +66,11 @@ and webpl_type =
   | Css
   | Html
   | Xml
+  | Opa
+  | Flash
   | Sql
 
+and idl_type = Thrift | ATD | Protobuf
 and media_type = Sound of string | Picture of string | Video of string
 
 (* main entry point *)

@@ -36,14 +36,12 @@ jobs:
           make install-deps-ALPINE-for-semgrep-core
           make install-deps-for-semgrep-core
           make core
-          # needed for the e2e test below
-          make core-install
       - name: Test semgrep-core
         run: |
           eval $(opam env)
           START=`date +%s`
           make core-test
-          make core-e2etest
+          make core-test-e2e
           END=`date +%s`
           TEST_RUN_TIME=$((END-START))
           curl --fail -L -X POST "https://dashboard.semgrep.dev/api/metric/semgrep.core.test-run-time-seconds.num" -d "$TEST_RUN_TIME"
@@ -86,9 +84,7 @@ jobs:
       - name: Install osemgrep
         run: |
           eval $(opam env)
-          make core-install
-          # needed for pipenv install to work below
-          cp bin/semgrep-core /usr/bin/
+          make copy-core-for-cli
       - name: Install Python dependencies
         run: |
           make install-deps-ALPINE-for-pysemgrep
@@ -97,6 +93,83 @@ jobs:
         working-directory: cli
         run: |
           make osempass
+
+  build-semgrep-js-ocaml-test:
+    name: build semgrep js ocaml for tests
+    runs-on: ubuntu-latest-16-core
+    container: returntocorp/ocaml:alpine-2023-06-16
+    # We need this hack because GHA tampers with the HOME in container
+    # and this does not play well with 'opam' installed in /root
+    env:
+      HOME: /root
+    steps:
+      - name: Make checkout speedy
+        run: git config --global fetch.parallel 50
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      #TODO: we should just call 'make install-deps-for-semgrep-core'
+      - name: Set up tree-sitter
+        run: |
+          (cd libs/ocaml-tree-sitter-core && ./configure && ./scripts/install-tree-sitter-lib)
+      # saving the checkout for build-test-js-artifacts below to save time
+      - name: Cache git checkout
+        id: cache-git
+        uses: actions/cache/save@v3
+        with:
+          path: .
+          key: semgrep-with-submodules-and-tree-sitter-${{ github.sha }}
+      - name: Build semgrep
+        run: |
+          eval $(opam env)
+          make install-deps-ALPINE-for-semgrep-core
+          make install-deps-for-semgrep-core
+          make build-semgrep-jsoo-debug
+      - uses: actions/upload-artifact@v3
+        with:
+          name: semgrep-js-ocaml-test-${{ github.sha }}
+          retention-days: 1
+          path: |
+            _build/default/js/engine/*.bc.js
+            _build/default/js/languages/*/*.bc.js
+
+  #TODO: commented for now because prevent the release and
+  # those jobs get "cancelled" in each of our PR.
+  #  test-semgrep-js:
+  #    name: test semgrep js
+  #    needs: [build-semgrep-js-ocaml-test]
+  #    runs-on: ubuntu-22.04
+  #    container: emscripten/emsdk:3.1.46
+  #    env:
+  #      HOME: /root
+  #    steps:
+  #      - name: Restore git checkout cache
+  #        id: restore-git
+  #        uses: actions/cache/restore@v3
+  #        with:
+  #          path: .
+  #          key: semgrep-with-submodules-and-tree-sitter-${{ github.sha }}
+  #      - name: Make checkout speedy
+  #        if: ${{ steps.restore-git.outputs.cache-hit != 'true' }}
+  #        run: git config --global fetch.parallel 50
+  #      - uses: actions/checkout@v3
+  #        if: ${{ steps.restore-git.outputs.cache-hit != 'true' }}
+  #        with:
+  #          submodules: true
+  #      - name: Set up tree-sitter
+  #        if: ${{ steps.restore-git.outputs.cache-hit != 'true' }}
+  #        run: |
+  #          (cd libs/ocaml-tree-sitter-core && ./configure && ./scripts/install-tree-sitter-lib)
+  #      - uses: actions/download-artifact@v3
+  #        with:
+  #          name: semgrep-js-ocaml-test-${{ github.sha }}
+  #          path: _build/default/js
+  #      - uses: actions/setup-node@v3
+  #        with:
+  #          node-version: "18"
+  #      - name: Run semgrep js e2e tests
+  #        run: |
+  #          make -C js -j $(nproc) test
 
   test-cli:
     name: test semgrep-cli
@@ -270,7 +343,6 @@ jobs:
         working-directory: cli
         run: |
           pipenv run semgrep --version
-          pipenv run python -m semgrep --version
           pipenv run semgrep-core -version
           pipenv run python3 ../perf/run-benchmarks --dummy
 
@@ -310,6 +382,8 @@ jobs:
     uses: ./.github/workflows/build-test-docker.yaml
     secrets: inherit
     with:
+      docker-flavor: |
+        latest=auto
       docker-tags: |
         type=semver,pattern={{version}}
         type=semver,pattern={{major}}.{{minor}}
@@ -320,6 +394,7 @@ jobs:
       artifact-name: image-test
       repository-name: ${{ github.repository }}
       file: Dockerfile
+      target: semgrep-cli
       enable-tests: true
 
   push-docker:
@@ -329,6 +404,40 @@ jobs:
     secrets: inherit
     with:
       artifact-name: image-test
+      repository-name: ${{ github.repository }}
+      dry-run: false
+
+  build-test-docker-nonroot:
+    # We want to run build-test-docker-nonroot *after*
+    # build-test-docker so that it reuses the warmed-up
+    # docker cache.
+    needs: [build-test-docker]
+    uses: ./.github/workflows/build-test-docker.yaml
+    secrets: inherit
+    with:
+      docker-flavor: |
+        latest=auto
+        suffix=-nonroot,onlatest=true
+      docker-tags: |
+        type=semver,pattern={{version}}
+        type=semver,pattern={{major}}.{{minor}}
+        type=ref,event=pr
+        type=ref,event=branch
+        type=sha,event=branch
+        type=edge
+      artifact-name: image-test-nonroot
+      repository-name: ${{ github.repository }}
+      file: Dockerfile
+      target: nonroot
+      enable-tests: false
+
+  push-docker-nonroot:
+    needs: [build-test-docker-nonroot]
+    uses: ./.github/workflows/push-docker.yaml
+    if: github.ref == 'refs/heads/develop' || (github.actor != 'dependabot[bot]' && !(github.event.pull_request.head.repo.full_name != github.repository))
+    secrets: inherit
+    with:
+      artifact-name: image-test-nonroot
       repository-name: ${{ github.repository }}
       dry-run: false
 
@@ -366,3 +475,10 @@ jobs:
   build-test-javascript:
     uses: ./.github/workflows/build-test-javascript.yaml
     secrets: inherit
+    with:
+      # we limit artifact uploads to avoid filling the S3 bucket with tons of semgrep.js builds.
+      # we will upload if one of these are true:
+      # - the branch name is "develop" (so that we can test the bleeding edge)
+      # - the branch name starts with "release-" (TODO: move this to release.yml instead)
+      # - the PR is not a fork and has a "publish-js" label
+      upload-artifacts: ${{ (github.ref == 'refs/heads/develop') || startsWith(github.ref, 'refs/heads/release-') || (!github.event.pull_request.head.repo.fork && contains(github.event.pull_request.labels.*.name, 'publish-js')) }}

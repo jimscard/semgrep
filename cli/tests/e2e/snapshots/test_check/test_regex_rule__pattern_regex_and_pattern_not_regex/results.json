@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/basic/regex-any-language.html"
     ]
@@ -22,7 +21,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -46,7 +46,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -70,7 +71,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -94,7 +96,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -118,7 +121,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -142,7 +146,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -166,7 +171,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -190,7 +196,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -214,7 +221,8 @@
         "message": "test regex message",
         "metadata": {},
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/basic/regex-any-language.html",
       "start": {
@@ -224,5 +232,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

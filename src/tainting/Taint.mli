@@ -87,6 +87,7 @@ and orig =
   | Arg of arg
       (** Polymorphic taint variable: arbitrary taint coming through one of the
        * arguments in a function definition. *)
+  | Control
 [@@deriving show]
 
 and taint = { orig : orig; tokens : tainted_tokens } [@@deriving show]
@@ -128,7 +129,6 @@ module Taint_set : sig
   val union : t -> t -> t
   val diff : t -> t -> t
   val map : (taint -> taint) -> t -> t
-  val concat_map : (taint -> t) -> t -> t
   val iter : (taint -> unit) -> t -> unit
   val fold : (taint -> 'a -> 'a) -> t -> 'a -> 'a
   val of_list : taint list -> t

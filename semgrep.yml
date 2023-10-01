@@ -35,11 +35,11 @@ rules:
         - cli/*.ml
         - cli_*/*.ml
         - Test.ml
-        - Matching_report.ml
+        - Core_text_output.ml
         - Matching_explanation.ml
         - Unit_*.ml
         - Test_*.ml
-        - runner/*.ml
+        - core_scan/*.ml
         - experiments/*
         - Check_*.ml
         - libs/*
@@ -407,6 +407,17 @@ rules:
       $LOGGER#flash is just for debuggging purposes.
     fix: ""
     languages: [ocaml]
+    severity: WARNING
+
+  - id: no-logger-flash-in-comments
+    patterns:
+      - pattern: (* ... $LOGGER#flash ... *)
+    message: >-
+      $LOGGER#flash is just for debuggging purposes.
+    fix: ""
+    languages: [generic]
+    paths:
+      include: ["*.ml"]
     severity: WARNING
 
   - id: no-match-x-x-with

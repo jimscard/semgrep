@@ -80,8 +80,9 @@ BUILD_BUILDID="some_id" SEMGREP_REPO_NAME="a/repo/name" SEMGREP_REPO_URL="https:
                 pull_request
 
   CONNECTION
-  Reporting start of scan for deployment_name
+  Reporting start of scan for deployment_name (scan_id=<MagicMock name='post()…
   Fetching configuration from Semgrep Cloud Platform
+  Enabled products: Semgrep Code, Semgrep Supply Chain
 
 ┌─────────────┐
 │ Scan Status │

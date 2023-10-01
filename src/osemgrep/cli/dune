@@ -8,6 +8,7 @@
   (libraries
     ; External libraries
     cmdliner
+    ocolor
     commons
 
     ; Internal libraries
@@ -16,8 +17,10 @@
     osemgrep_cli_login
     osemgrep_cli_lsp
     osemgrep_cli_interactive
-    osemgrep_cli_dump
+    osemgrep_cli_install
+    osemgrep_cli_show
     osemgrep_cli_test
+    osemgrep_configuring
 
     ; reusing code from Core_cli
     semgrep_core_cli

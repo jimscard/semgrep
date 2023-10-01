@@ -159,7 +159,7 @@ let rec stmt env st =
   | Label (_, _)
   | Goto (_, _, _)
   | Throw (_, _, _)
-  | Try (_, _, _, _)
+  | Try (_, _, _, _, _)
   | WithUsingResource (_, _, _)
   | Assert (_, _, _)
   | DirectiveStmt _
@@ -457,9 +457,6 @@ and for_stmt env (for_tok, hdr, s) =
     | ForEach (pat, tok, e) -> for_each (pat, tok, e)
     | MultiForEach fors -> String.concat ";" (Common.map multi_for_each fors)
     | ForEllipsis tok -> token ~d:"..." tok
-    | ForIn (init, exprs) ->
-        F.sprintf "%s %s %s" (show_init_list init) "in"
-          (String.concat "," (Common.map (fun e -> expr env e) exprs))
   in
   let body_str = stmt { env with level = env.level + 1 } s in
   for_format (token ~d:"for" for_tok) hdr_str body_str
@@ -552,7 +549,7 @@ and def_stmt env (entity, def_kind) =
   | VarDef def -> var_def (entity, def)
   | _ -> todo (S (DefStmt (entity, def_kind) |> G.s))
 
-(* TODO? maybe we should check id_info.id_hidden *)
+(* TODO? maybe we should check IdFlags.is_hidden !(id_info.id_flags) *)
 and ident_or_dynamic = function
   | EN (Id (x, _idinfo)) -> ident x
   | EN _

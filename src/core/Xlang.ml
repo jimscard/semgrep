@@ -1,8 +1,32 @@
+(* Yoann Padioleau
+ *
+ * Copyright (C) 2019-2023 Semgrep Inc.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public License
+ * version 2.1 as published by the Free Software Foundation, with the
+ * special exception on linking described in file LICENSE.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
+ * LICENSE for more details.
+ *)
+open Ppx_hash_lib.Std.Hash.Builtin
+
+(*****************************************************************************)
+(* Prelude *)
+(*****************************************************************************)
 (*
    Extended languages: everything from Lang.t + spacegrep (generic) and regex.
+
+   TODO: we probably want to rename this file Target_analyzer.ml to better
+   match Target_selector.ml
 *)
 
-open Ppx_hash_lib.Std.Hash.Builtin
+(*****************************************************************************)
+(* Types *)
+(*****************************************************************************)
 
 (* eXtended language, stored in the languages: field in the rule.
  * less: merge with xpattern_kind? *)
@@ -17,6 +41,10 @@ type t =
 [@@deriving show, eq, hash]
 
 exception InternalInvalidLanguage of string (* rule id *) * string (* msg *)
+
+(*****************************************************************************)
+(* API *)
+(*****************************************************************************)
 
 let of_lang (x : Lang.t) = L (x, [])
 
@@ -51,9 +79,16 @@ let assoc : (string * t) list =
   @ [
       ("regex", LRegex);
       ("none", LRegex);
-      ("generic", LSpacegrep);
-      ("spacegrep", LSpacegrep);
-      ("aliengrep", LAliengrep);
+      ("generic", LSpacegrep)
+      (* this is commented because only 'generic' is allowed in
+       * the languages: field in a Semgrep rule and we don't
+       * want error messages about supported_xlangs to display
+       * those entries.
+       * coupling: see Parse_rule.parse_languages
+       *
+       * ("spacegrep", LSpacegrep);
+       * ("aliengrep", LAliengrep);
+       *);
     ]
 
 let map = Common.hash_of_list assoc
@@ -66,7 +101,6 @@ let unsupported_xlang_message (xlang_s : string) =
     Common.spf "unsupported language: %s; supported language tags are: %s"
       xlang_s supported_xlangs
 
-(* coupling: Parse_mini_rule.parse_languages *)
 let of_string ?rule_id:id_opt s =
   match s with
   | "none"

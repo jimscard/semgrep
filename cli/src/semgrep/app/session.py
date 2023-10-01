@@ -151,7 +151,7 @@ class AppSession(requests.Session):
                 total=3,
                 backoff_factor=4,
                 allowed_methods=["GET", "POST"],
-                status_forcelist=(413, 429, 500, 502, 503),
+                status_forcelist=(413, 429, 500, 502, 503, 504),
             ),
         )
 
@@ -173,7 +173,9 @@ class AppSession(requests.Session):
         return self.token is not None
 
     def request(self, *args: Any, **kwargs: Any) -> requests.Response:
-        kwargs.setdefault("timeout", 60)
+        kwargs.setdefault(
+            "timeout", 70
+        )  # most backend endpoints are 60s, ideally we have the backend time out before the client
         kwargs.setdefault("headers", {})
         kwargs["headers"].setdefault("User-Agent", str(self.user_agent))
         if self.token:

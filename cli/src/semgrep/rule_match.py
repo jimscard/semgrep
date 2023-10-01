@@ -20,15 +20,12 @@ from attrs import evolve
 from attrs import field
 from attrs import frozen
 
-import semgrep.output_from_core as core
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
-import semgrep.util as util
 from semgrep.constants import NOSEM_INLINE_COMMENT_RE
 from semgrep.constants import RuleScanSource
 from semgrep.constants import RuleSeverity
 from semgrep.external.pymmh3 import hash128  # type: ignore[attr-defined]
 from semgrep.rule import Rule
-from semgrep.rule import RuleProduct
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Direct
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Transitive
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Transitivity
@@ -52,7 +49,7 @@ class RuleMatch:
     TODO: Rename this class to Finding?
     """
 
-    match: core.CoreMatch
+    match: out.CoreMatch
 
     # fields from the rule
     message: str = field(repr=False)
@@ -112,27 +109,37 @@ class RuleMatch:
     # TODO: return a out.RuleId
     @property
     def rule_id(self) -> str:
-        return self.match.rule_id.value
+        return self.match.check_id.value
 
     @property
     def path(self) -> Path:
-        return Path(self.match.location.path.value)
+        return Path(self.match.path.value)
 
     @property
-    def start(self) -> core.Position:
-        return self.match.location.start
+    def start(self) -> out.Position:
+        return self.match.start
 
     @property
-    def end(self) -> core.Position:
-        return self.match.location.end
+    def end(self) -> out.Position:
+        return self.match.end
+
+    # TODO: diff with rule.py product() method?
+    @property
+    def product(self) -> out.Product:
+        if "product" in self.metadata and self.metadata["product"] == "secrets":
+            return out.Product(out.Secrets())
+        elif "sca_info" in self.extra:
+            return out.Product(out.SCA())
+        else:
+            return out.Product(out.SAST())
 
     @property
-    def product(self) -> RuleProduct:
-        return RuleProduct.sca if "sca_info" in self.extra else RuleProduct.sast
+    def validation_state(self) -> Optional[out.ValidationState]:
+        return self.match.extra.validation_state
 
     @property
     def title(self) -> str:
-        if self.product == RuleProduct.sca:
+        if isinstance(self.product.value, out.SCA):
             cve_id = self.metadata.get("sca-vuln-database-identifier")
             sca_info = self.extra.get("sca_info")
             package_name = (
@@ -448,73 +455,8 @@ class RuleMatch:
             return blocking
 
     @property
-    def dataflow_trace(self) -> Optional[core.CliMatchDataflowTrace]:
-        # We need this to quickly get augment a Location with the contents of the location
-        # Convenient to just have it as a separate function
-        def translate_loc(location: core.Location) -> Tuple[core.Location, str]:
-            with open(location.path.value, errors="replace") as fd:
-                content = util.read_range(
-                    fd, location.start.offset, location.end.offset
-                )
-            return (location, content)
-
-        def translate_core_match_call_trace(
-            call_trace: core.CoreMatchCallTrace,
-        ) -> core.CliMatchCallTrace:
-            if isinstance(call_trace.value, core.CoreLoc):
-                return core.CliMatchCallTrace(
-                    core.CliLoc(translate_loc(call_trace.value.value))
-                )
-            elif isinstance(call_trace.value, core.CoreCall):
-                intermediate_vars = [
-                    core.CliMatchIntermediateVar(*translate_loc(var.location))
-                    for var in call_trace.value.value[1]
-                ]
-
-                return core.CliMatchCallTrace(
-                    core.CliCall(
-                        (
-                            translate_loc(call_trace.value.value[0]),
-                            intermediate_vars,
-                            translate_core_match_call_trace(call_trace.value.value[2]),
-                        )
-                    )
-                )
-
-        dataflow_trace = self.match.extra.dataflow_trace
-        if dataflow_trace:
-            taint_source = None
-            intermediate_vars = None
-            taint_sink = None
-            if dataflow_trace.taint_source:
-                taint_source = translate_core_match_call_trace(
-                    dataflow_trace.taint_source
-                )
-            if dataflow_trace.intermediate_vars:
-                intermediate_vars = []
-                for var in dataflow_trace.intermediate_vars:
-                    location = var.location
-                    # TODO avoid repeated opens in the common case (i.e. not
-                    # DeepSemgrep) where all of these locations are in the same
-                    # file?
-                    with open(location.path.value, errors="replace") as fd:
-                        content = util.read_range(
-                            fd, location.start.offset, location.end.offset
-                        )
-                    intermediate_vars.append(
-                        core.CliMatchIntermediateVar(
-                            location=location,
-                            content=content,
-                        )
-                    )
-            if dataflow_trace.taint_sink:
-                taint_sink = translate_core_match_call_trace(dataflow_trace.taint_sink)
-            return core.CliMatchDataflowTrace(
-                taint_source=taint_source,
-                intermediate_vars=intermediate_vars,
-                taint_sink=taint_sink,
-            )
-        return None
+    def dataflow_trace(self) -> Optional[out.MatchDataflowTrace]:
+        return self.match.extra.dataflow_trace
 
     @property
     def exposure_type(self) -> Optional[str]:
@@ -577,6 +519,10 @@ class RuleMatch:
             metadata=out.RawJson(self.metadata),
             is_blocking=self.is_blocking,
             dataflow_trace=self.dataflow_trace,
+            # TODO: Currently bypassing extra because it stores a
+            # string instead of a ValidationState. Fix the monkey
+            # patchable version if you want monkey patching to work.
+            validation_state=self.match.extra.validation_state,
         )
 
         if self.extra.get("fixed_lines"):

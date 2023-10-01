@@ -2,8 +2,6 @@
 (* Types and constants *)
 (*****************************************************************************)
 
-type extension = unit
-
 type env = {
   git : Git_metadata.env;
   _GITHUB_EVENT_JSON : Yojson.Basic.t;
@@ -22,7 +20,11 @@ let _MAX_FETCH_ATTEMPT_COUNT = 10
 (* A limit of how many fetch we should do until we find the common commit
    between two branches. *)
 
-let scan_environment = Some "github-actions"
+let scan_environment = "github-actions"
+
+(*****************************************************************************)
+(* Implement signature in Project_metadata.S *)
+(*****************************************************************************)
 
 let get_repo_name env =
   let err = "Could not get repo_name when running in GitHub Action" in
@@ -104,6 +106,10 @@ let get_ci_job_url env =
       | _ -> None)
 
 let get_event_name env = env._GITHUB_EVENT_NAME
+
+(*****************************************************************************)
+(* Helpers *)
+(*****************************************************************************)
 
 (* Split out shallow fetch so we can mock it away in tests. *)
 let _shallow_fetch_branch branch_name =
@@ -202,16 +208,14 @@ let _find_branchoff_point_from_github_api env =
   | Some gh_token, Some api_url, Some head_branch_hash -> (
       let headers = [ ("Authorization", Fmt.str "Bearer %s" gh_token) ] in
       let open Lwt.Infix in
-      Http_lwt_client.request ~meth:`GET ~headers
-        (Fmt.str "%a/repos/%s/compare/%a...%a" Uri.pp api_url repo_name
-           Digestif.SHA1.pp base_branch_hash Digestif.SHA1.pp head_branch_hash)
-        (fun _resp buf str ->
-          Buffer.add_string buf str;
-          Lwt.return buf)
-        (Buffer.create 0x100)
+      Http_helpers.get_async ~headers
+        (Uri.of_string
+           (Fmt.str "%a/repos/%s/compare/%a...%a" Uri.pp api_url repo_name
+              Digestif.SHA1.pp base_branch_hash Digestif.SHA1.pp
+              head_branch_hash))
       >>= function
-      | Ok ({ Http_lwt_client.status = `OK; _ }, buf) ->
-          let body = Buffer.contents buf |> Yojson.Basic.from_string in
+      | Ok body ->
+          let body = body |> Yojson.Basic.from_string in
           let commit =
             Option.bind
               Glom.(
@@ -232,7 +236,7 @@ let rec _find_branchoff_point ?(attempt_count = 0) env =
   and head_branch_name = Option.get (_get_head_branch_ref env) in
 
   let fetch_depth = 4. ** Float.of_int attempt_count |> Float.to_int in
-  let fetch_depth = fetch_depth + Semgrep_envvars.v.min_fetch_depth in
+  let fetch_depth = fetch_depth + !Semgrep_envvars.v.min_fetch_depth in
   let fetch_depth =
     if attempt_count > _MAX_FETCH_ATTEMPT_COUNT then
       Float.to_int (2. ** 31.) - 1
@@ -368,6 +372,10 @@ let env =
     $ _github_repository $ _github_server_url $ _github_api_url $ _github_run_id
     $ _github_event_name $ _github_ref $ _github_head_ref $ gh_token)
 
+(*****************************************************************************)
+(* Entry point *)
+(*****************************************************************************)
+
 let make env =
   let _SEMGREP_REPO_NAME = Some (get_repo_name env) in
   let _SEMGREP_REPO_URL = get_repo_url env in
@@ -379,7 +387,9 @@ let make env =
     Glom.(
       get_and_coerce_opt string env._GITHUB_EVENT_JSON
         [ k "sender"; k "avatar_url" ])
-    |> Option.map Uri.of_string
+    (* TODO but require better type in semgrep_output_v1.project_metadata
+     * |> Option.map Uri.of_string
+     *)
   in
   let pull_request_author_username =
     Glom.(
@@ -390,7 +400,7 @@ let make env =
     Glom.(
       get_and_coerce_opt string env._GITHUB_EVENT_JSON
         [ k "pull_request"; k "user"; k "avatar_url" ])
-    |> Option.map Uri.of_string
+    (* TODO |> Option.map Uri.of_string *)
   in
   let value =
     (* XXX(dinosaure): like [**super.to_dict()] *)

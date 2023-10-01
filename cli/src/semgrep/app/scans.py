@@ -16,6 +16,7 @@ from typing import Set
 from typing import Tuple
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import click
 import requests
@@ -23,15 +24,16 @@ from boltons.iterutils import partition
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semdep.parsers.util import DependencyParserError
+from semgrep import __VERSION__
 from semgrep.constants import DEFAULT_SEMGREP_APP_CONFIG_URL
 from semgrep.constants import RuleSeverity
 from semgrep.error import SemgrepError
 from semgrep.parsing_data import ParsingData
+from semgrep.project import ProjectConfig
 from semgrep.rule import Rule
 from semgrep.rule_match import RuleMatchMap
 from semgrep.state import get_state
 from semgrep.verbose_logging import getLogger
-
 
 if TYPE_CHECKING:
     from semgrep.engine import EngineType
@@ -45,6 +47,12 @@ class ScanHandler:
         self._deployment_id: Optional[int] = None
         self._deployment_name: str = deployment_name
 
+        self.local_id = str(uuid4())
+        self.scan_metadata = out.ScanMetadata(
+            cli_version=out.Version(__VERSION__),
+            unique_id=self.local_id,
+            requested_products=[],
+        )
         self.scan_id = None
         self.ignore_patterns: List[str] = []
         self._policy_names: List[str] = []
@@ -56,6 +64,7 @@ class ScanHandler:
         self._skipped_match_based_ids: List[str] = []
         self._scan_params: str = ""
         self._rules: str = ""
+        self._enabled_products: List[str] = []
 
     @property
     def deployment_id(self) -> Optional[int]:
@@ -120,6 +129,13 @@ class ScanHandler:
         """
         return self._rules
 
+    @property
+    def enabled_products(self) -> List[str]:
+        """
+        Separate property for easy of mocking in test
+        """
+        return self._enabled_products
+
     def _get_scan_config_from_app(self, url: str) -> Dict[str, Any]:
         state = get_state()
         response = state.app_session.get(url)
@@ -173,6 +189,7 @@ class ScanHandler:
         self._dependency_query = body.get("dependency_query") or False
         self._skipped_syntactic_ids = body.get("triage_ignored_syntactic_ids") or []
         self._skipped_match_based_ids = body.get("triage_ignored_match_based_ids") or []
+        self._enabled_products = body.get("enabled_products") or []
         self.ignore_patterns = body.get("ignored_files") or []
 
         if state.terminal.is_debug:
@@ -183,7 +200,9 @@ class ScanHandler:
                 pass
             logger.debug(f"Got configuration {json.dumps(config, indent=4)}")
 
-    def start_scan(self, meta: Dict[str, Any]) -> None:
+    def start_scan(
+        self, project_metadata: out.ProjectMetadata, project_config: ProjectConfig
+    ) -> None:
         """
         Get scan id and file ignores
 
@@ -194,10 +213,18 @@ class ScanHandler:
             logger.info(f"Would have sent POST request to create scan")
             return
 
-        logger.debug("Starting scan")
+        request = out.ScanRequest(
+            meta=out.RawJson(
+                {**project_metadata.to_json(), **project_config.to_dict()}
+            ),
+            scan_metadata=self.scan_metadata,
+            project_metadata=project_metadata,
+            project_config=out.ProjectConfig(out.RawJson(project_config.to_dict())),
+        ).to_json()
+        logger.debug(f"Starting scan: {json.dumps(request, indent=4)}")
         response = state.app_session.post(
             f"{state.env.semgrep_url}/api/agent/deployments/scans",
-            json={"meta": meta},
+            json=request,
         )
 
         if response.status_code == 404:
@@ -216,6 +243,7 @@ class ScanHandler:
 
         body = response.json()
         self.scan_id = body["scan"]["id"]
+        self._enabled_products = body["scan"].get("enabled_products") or []
 
     def report_failure(self, exit_code: int) -> None:
         """
@@ -253,6 +281,7 @@ class ScanHandler:
         commit_date: str,
         lockfile_dependencies: Dict[str, List[out.FoundDependency]],
         dependency_parser_errors: List[DependencyParserError],
+        contributions: out.Contributions,
         engine_requested: "EngineType",
         progress_bar: "Progress",
     ) -> Tuple[bool, str]:
@@ -260,7 +289,7 @@ class ScanHandler:
         commit_date here for legacy reasons. epoch time of latest commit
         """
         state = get_state()
-        rule_ids = [r.id for r in rules]
+        rule_ids = [out.RuleId(r.id) for r in rules]
         all_matches = [
             match
             for matches_of_rule in matches_by_rule.values()
@@ -304,7 +333,11 @@ class ScanHandler:
             searched_paths=[str(t) for t in sorted(targets)],
             renamed_paths=[str(rt) for rt in sorted(renamed_targets)],
             rule_ids=rule_ids,
+            contributions=contributions,
         )
+        if self._dependency_query:
+            ci_scan_results.dependencies = out.CiScanDependencies(lockfile_dependencies)
+
         findings_and_ignores = ci_scan_results.to_json()
 
         if any(match.severity == RuleSeverity.EXPERIMENT for match in new_ignored):
@@ -317,53 +350,50 @@ class ScanHandler:
 
         dependency_counts = {k: len(v) for k, v in lockfile_dependencies.items()}
 
-        complete = {
-            "exit_code": 1
+        complete = out.CiScanCompleteResponse(
+            exit_code=1
             if any(match.is_blocking and not match.is_ignored for match in all_matches)
             else 0,
-            "dependency_parser_errors": [e.to_json() for e in dependency_parser_errors],
-            "stats": {
-                "findings": len(
+            dependency_parser_errors=dependency_parser_errors,
+            stats=out.CiScanCompleteStats(
+                findings=len(
                     [match for match in new_matches if not match.from_transient_scan]
                 ),
-                "errors": [error.to_dict() for error in errors],
-                "total_time": total_time,
-                "unsupported_exts": dict(ignored_ext_freqs),
-                "lockfile_scan_info": dependency_counts,
-                "parse_rate": {
-                    lang: {
-                        "targets_parsed": data.num_targets - data.targets_with_errors,
-                        "num_targets": data.num_targets,
-                        "bytes_parsed": data.num_bytes - data.error_bytes,
-                        "num_bytes": data.num_bytes,
-                    }
+                errors=[error.to_CliError() for error in errors],
+                total_time=total_time,
+                unsupported_exts=dict(ignored_ext_freqs),
+                lockfile_scan_info=dependency_counts,
+                parse_rate={
+                    lang: out.ParsingStats(
+                        targets_parsed=data.num_targets - data.targets_with_errors,
+                        num_targets=data.num_targets,
+                        bytes_parsed=data.num_bytes - data.error_bytes,
+                        num_bytes=data.num_bytes,
+                    )
                     for (lang, data) in parse_rate.get_errors_by_lang().items()
                 },
-                "engine_requested": engine_requested.name,
-            },
-        }
+                engine_requested=engine_requested.name,
+            ),
+        )
 
         if self._dependency_query:
-            lockfile_dependencies_json = {}
-            for path, dependencies in lockfile_dependencies.items():
-                lockfile_dependencies_json[path] = [
-                    dependency.to_json() for dependency in dependencies
-                ]
-            complete["dependencies"] = lockfile_dependencies_json
+            complete.dependencies = out.CiScanDependencies(lockfile_dependencies)
 
         if self.dry_run:
             logger.info(
                 f"Would have sent findings and ignores blob: {json.dumps(findings_and_ignores, indent=4)}"
             )
             logger.info(
-                f"Would have sent complete blob: {json.dumps(complete, indent=4)}"
+                f"Would have sent complete blob: {json.dumps(complete.to_json(), indent=4)}"
             )
             return (False, "")
         else:
             logger.debug(
                 f"Sending findings and ignores blob: {json.dumps(findings_and_ignores, indent=4)}"
             )
-            logger.debug(f"Sending complete blob: {json.dumps(complete, indent=4)}")
+            logger.debug(
+                f"Sending complete blob: {json.dumps(complete.to_json(), indent=4)}"
+            )
 
         results_task = progress_bar.add_task("Uploading scan results")
         response = state.app_session.post(
@@ -382,14 +412,15 @@ class ScanHandler:
                 click.echo(f"Server returned following warning: {message}", err=True)
 
             if "task_id" in res:
-                complete["task_id"] = res["task_id"]
+                complete.task_id = res["task_id"]
 
             progress_bar.update(results_task, completed=100)
 
         except requests.RequestException as exc:
             raise Exception(f"API server returned this error: {response.text}") from exc
 
-        try_until = datetime.now() + timedelta(minutes=10)
+        try_until = datetime.now() + timedelta(minutes=20)
+        slow_down_after = datetime.now() + timedelta(minutes=2)
         complete_task = progress_bar.add_task("Finalizing scan")
         while datetime.now() < try_until:
             logger.debug("Sending /complete")
@@ -398,7 +429,7 @@ class ScanHandler:
             response = state.app_session.post(
                 f"{state.env.semgrep_url}/api/agent/scans/{self.scan_id}/complete",
                 timeout=state.env.upload_findings_timeout,
-                json=complete,
+                json=complete.to_json(),
             )
 
             try:
@@ -418,7 +449,7 @@ class ScanHandler:
                 )
             else:
                 progress_bar.advance(complete_task)
-                sleep(5)
+                sleep(5 if datetime.utcnow() < slow_down_after else 30)
                 continue
 
         raise Exception(

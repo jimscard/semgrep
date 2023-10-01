@@ -6,7 +6,7 @@
 # of the 'semgrep-python' wrapping.
 #
 
-# The docker base image below in the FROM currently uses OCaml 4.12.0
+# The docker base image below in the FROM currently uses OCaml 4.14.0
 # See https://github.com/returntocorp/ocaml-layer/blob/master/configs/alpine.sh
 #
 # coupling: if you modify the OCaml version there, you probably also need
@@ -56,7 +56,7 @@ RUN ./_build/install/default/bin/semgrep-core -version
 #
 
 FROM python:3.9.1-alpine3.13
-LABEL maintainer="support@r2c.dev"
+LABEL maintainer="support@semgrep.com"
 
 # ugly: circle CI requires valid git and ssh programs in the container
 # when running semgrep on a repository containing submodules

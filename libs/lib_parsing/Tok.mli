@@ -1,16 +1,24 @@
-(* Token type used in many ASTs (including in AST_generic.ml) and CSTs
+(* Type to represent a token (e.g., an identifier, a keyword).
+ * Tok.t is used in many ASTs (including in AST_generic.ml) and CSTs
  * across Semgrep.
  *
- * The types below are a bit complicated because we want
- * to represent "fake" and "expanded" tokens.
-
-   TODO: please explain the role of a Tok.t. Is it a best effort to track
-   the start/end location of a node? What can we do with a tok e.g. is it
-   reliable to extract the string from it or does it not make sense in general
-   since it's only a best effort to report error locations?
-   What about empty tokens representing a position in a file such as the
-   position of the contents of an empty string literal - how to create them?
-   Why are there fake tokens at all? When is it safe to use them?
+ * Tok.t is a bit complicated because we want to represent "fake" and
+ * "expanded" tokens. We use fake tokens because in many of
+ * the ASTs/CSTs in Semgrep (including in AST_generic.ml) we store the
+ * tokens in the ASTs/CSTs at the leaves, and sometimes the actual
+ * token is optional (e.g., a virtual semicolon in Javascript).
+ * We could use an option type, but that would involve a big refactoring
+ * hence the current use of FakeTok.
+ * We also use expanded tokens to track tokens through macro expansions
+ * or file includes (e.g., #include in C, #import in Jsonnet).
+ *
+ * Ideally, we should not store tokens in the ASTs, just location information,
+ * but again this would involve a big refactoring and redesigning deeply how
+ * we track location in Semgrep.
+ *
+ * It is reliable to extract the string and position from a token when
+ * the token is an OriginTok (see also Tok.is_origintok()). For the other
+ * cases, you might get an NoTokenLocation exn.
  *)
 
 (*****************************************************************************)
@@ -18,46 +26,45 @@
 (*****************************************************************************)
 
 type location = {
-  str : string; (* the content of the token starting at pos *)
+  str : string; (* the content of the token starting at pos (e.g., "if") *)
   pos : Pos.t;
 }
-[@@deriving show, eq]
+[@@deriving show, eq, ord, sexp]
 
 type t =
   (* Token found in the original file *)
   | OriginTok of location
   (* Present only in the AST and generated after parsing. Can be used
-   * when building some extra AST elements (e.g., fake semicolons) *)
-  | FakeTokStr of
-      string (* to help the generic pretty printer, e.g. "," *)
-      * (* Sometimes we generate fake tokens close to existing
-         * origin tokens. This can be useful when we need to give an error
-         * message that involves a fakeToken. The int is a kind of
-         * virtual position, an offset.
-         * Those are called "safe" fake tokens (in contrast to the
-         * regular/unsafe one which have no position information at all).
-         *)
-      (location * int) option
+   * when building some extra AST elements (e.g., fake semicolons).
+   * The string (e.g., ";")  is to help the generic pretty printer.
+   *)
+  | FakeTok of string * virtual_location option
   (* "Expanded" tokens are marked with a special tag so that if someone does
    * a transformation on those expanded tokens, they will get a warning
    * (because we may have trouble back-propagating the transformation back
    *  to the original file).
+   * The location refers to the preprocessed file (e.g. /tmp/pp-xxxx.pphp).
    *)
-  | ExpandedTok of
-      (* refers to the preprocessed file, e.g. /tmp/pp-xxxx.pphp *)
-      location
-      * (* kind of a virtual position. The location refers to the last token
-         * before a series of expanded tokens and the int is an offset.
-         * The goal is to be able to compare the position of tokens
-         * between them, even for expanded tokens. See compare_pos().
-         *)
-      (location * int)
+  | ExpandedTok of location * virtual_location
   (* The Ab constructor is (ab)used to call '=' to compare big AST portions.
    * Ab means AbstractLineTok (short name to not polluate in debug mode).
    * An alternative is to use the t_always_equal special type below.
    *)
   | Ab
-[@@deriving show, eq]
+
+(* Sometimes we generate fake tokens close to existing
+ * origin tokens. This can be useful when we need to give an error
+ * message that involves a fakeToken. The int below is a kind of
+ * virtual position, an offset.
+ * Those are called "safe" fake tokens (in contrast to the
+ * regular/unsafe one which have no position information at all).
+ *
+ * For ExpandedTok the location refers to the last token
+ * before a series of expanded tokens and the int is an offset.
+ * The goal is to be able to compare the position of tokens,
+ * even for expanded tokens. See compare_pos().
+ *)
+and virtual_location = location * int [@@deriving show, eq, ord, sexp]
 
 (* To customize show() dynamically. If you set this to true, AST
  * dumper will display the full token information instead of just a '()'
@@ -68,7 +75,7 @@ val pp_full_token_info : bool ref
  * are actually not automatically derived; Tok.ml provides customized
  * behavior where we assume all tokens are equal.
  * This is used by Semgrep in AST_generic and Raw_tree to be able to
-q * check for equality of big AST constructs (e.g., complex expressions) by not
+ * check for equality of big AST constructs (e.g., complex expressions) by not
  * caring about differences in token positions.
  *)
 type t_always_equal = t [@@deriving show, eq, hash]
@@ -150,8 +157,11 @@ val stringpos_of_tok : t -> string
 (* @raise NoTokenLocation if given an unsafe fake token (without location) *)
 val unsafe_loc_of_tok : t -> location
 
-(* Extract the token (really lexeme) content *)
+(* Unsafe: Extract the token (really lexeme) content *)
 val content_of_tok : t -> string
+
+(* Extract the token (really lexeme) content *)
+val content_of_tok_opt : t -> string option
 
 (* Extract position information *)
 val line_of_tok : t -> int

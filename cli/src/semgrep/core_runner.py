@@ -3,7 +3,6 @@ import collections
 import contextlib
 import json
 import resource
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -26,12 +25,11 @@ from typing import Tuple
 
 from attr import asdict
 from attr import define
+from attr import evolve
 from attr import field
 from attr import frozen
 from boltons.iterutils import get_path
 from rich import box
-from rich.columns import Columns
-from rich.padding import Padding
 from rich.progress import BarColumn
 from rich.progress import Progress
 from rich.progress import TaskID
@@ -41,7 +39,7 @@ from rich.progress import TimeElapsedColumn
 from rich.table import Table
 from ruamel.yaml import YAML
 
-import semgrep.output_from_core as core
+import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.app import auth
 from semgrep.config_resolver import Config
 from semgrep.console import console
@@ -49,24 +47,20 @@ from semgrep.constants import Colors
 from semgrep.constants import PLEASE_FILE_ISSUE_TEXT
 from semgrep.core_output import core_error_to_semgrep_error
 from semgrep.core_output import core_matches_to_rule_matches
-from semgrep.core_output import parse_core_output
 from semgrep.engine import EngineType
 from semgrep.error import SemgrepCoreError
 from semgrep.error import SemgrepError
 from semgrep.error import with_color
 from semgrep.output_extra import OutputExtra
 from semgrep.parsing_data import ParsingData
-from semgrep.profiling import ProfilingData
-from semgrep.profiling import Times
 from semgrep.rule import Rule
-from semgrep.rule import RuleProduct
 from semgrep.rule_match import OrderedRuleMatchList
 from semgrep.rule_match import RuleMatchMap
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Ecosystem
 from semgrep.semgrep_types import Language
 from semgrep.state import get_state
 from semgrep.target_manager import TargetManager
-from semgrep.util import unit_str
+from semgrep.target_mode import TargetModeConfig
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
@@ -84,6 +78,36 @@ INPUT_BUFFER_LIMIT: int = 1024 * 1024 * 1024
 #
 # test/e2e/test_performance.py is one test that exercises this risk.
 LARGE_READ_SIZE: int = 1024 * 1024 * 512
+
+
+def get_contributions(engine_type: EngineType) -> out.Contributions:
+    binary_path = engine_type.get_binary_path()
+    start = datetime.now()
+    if binary_path is None:  # should never happen, doing this for mypy
+        raise SemgrepError("semgrep engine not found.")
+    cmd = [
+        str(binary_path),
+        "-json",
+        "-dump_contributions",
+    ]
+    env = get_state().env
+
+    try:
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use.dangerous-subprocess-use
+        raw_output = subprocess.run(
+            cmd,
+            timeout=env.git_command_timeout,
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+        contributions = out.Contributions.from_json_string(raw_output)
+    except subprocess.CalledProcessError:
+        logger.warning("Failed to collect contributions. Continuing with scan...")
+        contributions = out.Contributions([])
+
+    logger.debug(f"semgrep contributions ran in {datetime.now() - start}")
+    return contributions
 
 
 def setrlimits_preexec_fn() -> None:
@@ -152,7 +176,7 @@ def dedup_errors(errors: List[SemgrepCoreError]) -> List[SemgrepCoreError]:
 
 def uniq_error_id(
     error: SemgrepCoreError,
-) -> Tuple[int, Path, core.Position, core.Position, str]:
+) -> Tuple[int, Path, out.Position, out.Position, str]:
     return (
         error.code,
         Path(error.core.location.path.value),
@@ -229,7 +253,6 @@ class StreamingSemgrepCore:
         """
         stdout_lines: List[bytes] = []
         num_total_targets: int = self._total
-        num_scanned_targets: int = 0
 
         # Start out reading two bytes at a time (".\n")
         get_input: Callable[
@@ -505,9 +528,29 @@ class Plan:
 
     # TODO: make this counts_by_lang_label, returning TaskCounts
     def split_by_lang_label(self) -> Dict[str, "TargetMappings"]:
+        return self.split_by_lang_label_for_product()
+
+    # Divides rule mapping up into the rule counts per language
+    # filtering out rules for a specific product. If product = None
+    # then all products are included.
+    def split_by_lang_label_for_product(
+        self, product: Optional[out.Product] = None
+    ) -> Dict[str, "TargetMappings"]:
         result: Dict[str, TargetMappings] = collections.defaultdict(TargetMappings)
         for task in self.target_mappings:
-            result[task.language_label].append(task)
+            result[task.language_label].append(
+                task
+                if product is None
+                else Task(
+                    path=task.path,
+                    language=task.language,
+                    rule_nums=tuple(
+                        num
+                        for num in task.rule_nums
+                        if self.rules[num].product == product
+                    ),
+                )
+            )
         return result
 
     @lru_cache(maxsize=1000)  # caching this saves 60+ seconds on mid-sized repos
@@ -560,19 +603,28 @@ class Plan:
     def num_targets(self) -> int:
         return len(self.target_mappings)
 
-    def table_by_language(self) -> Table:
+    def rule_count_for_product(self, product: out.Product) -> int:
+        rule_nums: Set[int] = set()
+        for task in self.target_mappings:
+            for rule_num in task.rule_nums:
+                if self.rules[rule_num].product == product:
+                    rule_nums.add(rule_num)
+        return len(rule_nums)
+
+    def table_by_language(self, with_tables_for: Optional[out.Product] = None) -> Table:
         table = Table(box=box.SIMPLE_HEAD, show_edge=False)
         table.add_column("Language")
         table.add_column("Rules", justify="right")
         table.add_column("Files", justify="right")
 
         plans_by_language = sorted(
-            self.split_by_lang_label().items(),
+            self.split_by_lang_label_for_product(with_tables_for).items(),
             key=lambda x: (x[1].file_count, x[1].rule_count),
             reverse=True,
         )
         for language, plan in plans_by_language:
-            table.add_row(language, str(plan.rule_count), str(plan.file_count))
+            if plan.rule_count:
+                table.add_row(language, str(plan.rule_count), str(plan.file_count))
 
         return table
 
@@ -607,17 +659,15 @@ class Plan:
 
         return table
 
-    def table_by_origin(self) -> Table:
+    def table_by_origin(self, with_tables_for: Optional[out.Product] = None) -> Table:
         table = Table(box=box.SIMPLE_HEAD, show_edge=False)
         table.add_column("Origin")
         table.add_column("Rules", justify="right")
 
         origin_counts = collections.Counter(
-            get_path(
-                rule.metadata, ("semgrep.dev", "rule", "origin"), default="unknown"
-            )
+            get_path(rule.metadata, ("semgrep.dev", "rule", "origin"), default="custom")
             for rule in self.rules
-            if rule.product == RuleProduct.sast
+            if rule.product == with_tables_for
         )
 
         for origin, count in sorted(
@@ -644,7 +694,7 @@ class Plan:
         sca_analysis_counts = collections.Counter(
             SCA_ANALYSIS_NAMES.get(rule.metadata.get("sca-kind", ""), "Unknown")
             for rule in self.rules
-            if rule.product == RuleProduct.sca
+            if isinstance(rule.product.value, out.SCA)
         )
 
         for sca_analysis, count in sorted(
@@ -662,40 +712,6 @@ class Plan:
         for language in self.split_by_lang_label():
             metrics.add_feature("language", language)
 
-    def print(self, *, with_tables_for: RuleProduct) -> None:
-        if self.target_mappings.rule_count == 0:
-            console.print("Nothing to scan.")
-            return
-
-        if self.target_mappings.rule_count == 1:
-            console.print(f"Scanning {unit_str(len(self.target_mappings), 'file')}.")
-            return
-
-        if len(self.split_by_lang_label()) == 1:
-            console.print(
-                f"Scanning {unit_str(self.target_mappings.file_count, 'file')} with {unit_str(self.target_mappings.rule_count, f'{list(self.split_by_lang_label())[0]} rule')}."
-            )
-            return
-
-        if with_tables_for == RuleProduct.sast:
-            tables = [
-                self.table_by_language(),
-                self.table_by_origin(),
-            ]
-        elif with_tables_for == RuleProduct.sca:
-            tables = [
-                self.table_by_ecosystem(),
-                self.table_by_sca_analysis(),
-            ]
-        else:
-            tables = []
-
-        columns = Columns(tables, padding=(1, 8))
-
-        # rich tables are 2 spaces indented by default
-        # deindent only by 1 to align the content, instead of the invisible table border
-        console.print(Padding(columns, (1, 0)), deindent=1)
-
     def __str__(self) -> str:
         return f"<Plan of {len(self.target_mappings)} tasks for {list(self.split_by_lang_label())}>"
 
@@ -711,22 +727,24 @@ class CoreRunner:
         self,
         jobs: Optional[int],
         engine_type: EngineType,
+        run_secrets: bool,
         timeout: int,
         max_memory: int,
         timeout_threshold: int,
         interfile_timeout: int,
         optimizations: str,
-        core_opts_str: Optional[str],
+        allow_untrusted_postprocessors: bool,
     ):
         self._binary_path = engine_type.get_binary_path()
         self._jobs = jobs or engine_type.default_jobs
         self._engine_type = engine_type
+        self._run_secrets = engine_type
         self._timeout = timeout
         self._max_memory = max_memory
         self._timeout_threshold = timeout_threshold
         self._interfile_timeout = interfile_timeout
         self._optimizations = optimizations
-        self._core_opts = shlex.split(core_opts_str) if core_opts_str else []
+        self._allow_untrusted_postprocessors = allow_untrusted_postprocessors
 
     def _extract_core_output(
         self,
@@ -759,7 +777,7 @@ class CoreRunner:
             )
 
             if "errors" in output_json:
-                parsed_output = parse_core_output(output_json)
+                parsed_output = out.CoreOutput.from_json(output_json)
                 errors = parsed_output.errors
                 if len(errors) < 1:
                     self._fail(
@@ -852,31 +870,6 @@ class CoreRunner:
             f"Error while matching: {reason}\n{details}" f"{PLEASE_FILE_ISSUE_TEXT}"
         )
 
-    def _add_match_times(
-        self,
-        profiling_data: ProfilingData,
-        timing: core.CoreTiming,
-    ) -> None:
-        if timing.rules_parse_time:
-            profiling_data.set_rules_parse_time(timing.rules_parse_time)
-
-        for t in timing.targets:
-            rule_timings = {
-                rt.rule_id: Times(rt.parse_time, rt.match_time) for rt in t.rule_times
-            }
-            profiling_data.set_file_times(Path(t.path.value), rule_timings, t.run_time)
-
-    def _add_max_memory_bytes(
-        self, profiling_data: ProfilingData, max_memory_bytes: int
-    ) -> None:
-        """
-        This represents the maximum amount of memory used by the OCaml side of
-        Semgrep during its execution.
-
-        This is useful for telemetry purposes.
-        """
-        profiling_data.set_max_memory_bytes(max_memory_bytes)
-
     @staticmethod
     def plan_core_run(
         rules: List[Rule],
@@ -903,7 +896,7 @@ class CoreRunner:
             rule
             for rule in rules
             # filter out SCA rules with no relevant lockfiles
-            if rule.product != RuleProduct.sca
+            if not (isinstance(rule.product.value, out.SCA))
             or any(lockfiles[ecosystem] for ecosystem in rule.ecosystems)
         ]
 
@@ -911,7 +904,10 @@ class CoreRunner:
             for language in rule.languages:
                 targets = list(
                     target_manager.get_files_for_rule(
-                        language, rule.includes, rule.excludes, rule.id
+                        language,
+                        rule.includes,
+                        rule.excludes,
+                        rule.id,
                     )
                 )
 
@@ -939,7 +935,10 @@ class CoreRunner:
         rules: List[Rule],
         target_manager: TargetManager,
         dump_command_for_core: bool,
+        time_flag: bool,
         engine: EngineType,
+        run_secrets: bool,
+        target_mode_config: TargetModeConfig,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -951,7 +950,7 @@ class CoreRunner:
         max_timeout_files: Set[Path] = set()
         # TODO this is a quick fix, refactor this logic
 
-        profiling_data: ProfilingData = ProfilingData()
+        profiling_data: Optional[out.Profile] = None
         parsing_data: ParsingData = ParsingData()
 
         # Create an exit stack context manager to properly handle closing
@@ -971,21 +970,74 @@ class CoreRunner:
             if dump_command_for_core
             else tempfile.NamedTemporaryFile("w+")
         )
+        if target_mode_config.is_pro_diff_scan:
+            diff_target_file = exit_stack.enter_context(
+                (state.env.user_data_folder / "semgrep_diff_targets.txt").open("w+")
+                if dump_command_for_core
+                else tempfile.NamedTemporaryFile("w+")
+            )
 
         with exit_stack:
-            plan = self.plan_core_run(rules, target_manager, all_targets)
-            plan.record_metrics()
+            cmd = [
+                str(self._binary_path),
+                "-json",
+            ]
 
-            parsing_data.add_targets(plan)
-            target_file_contents = json.dumps(plan.to_json())
-            target_file.write(target_file_contents)
-            target_file.flush()
-
+            # adding rules option
             rule_file_contents = json.dumps(
                 {"rules": [rule._raw for rule in rules]}, indent=2, sort_keys=True
             )
             rule_file.write(rule_file_contents)
             rule_file.flush()
+            cmd.extend(["-rules", rule_file.name])
+
+            # adding multi-core option
+            cmd.extend(["-j", str(self._jobs)])
+
+            # adding targets option
+            if target_mode_config.is_pro_diff_scan:
+                diff_targets = target_mode_config.get_diff_targets()
+                diff_target_file_contents = "\n".join(
+                    [str(path) for path in diff_targets]
+                )
+                diff_target_file.write(diff_target_file_contents)
+                diff_target_file.flush()
+                cmd.extend(["-diff_targets", diff_target_file.name])
+                cmd.extend(["-diff_depth", str(target_mode_config.get_diff_depth())])
+
+                # For the pro diff scan, it's necessary to consider all input files as
+                # "targets" and the files that have changed between the head and baseline
+                # commits as "diff targets". To compile a comprehensive list of all input files
+                # for `plan`, the `baseline_handler` is disabled within the `target_manager`
+                # when executing `plan_core_run`.
+                plan = self.plan_core_run(
+                    rules, evolve(target_manager, baseline_handler=None), all_targets
+                )
+
+            else:
+                plan = self.plan_core_run(rules, target_manager, all_targets)
+
+            plan.record_metrics()
+            parsing_data.add_targets(plan)
+            target_file_contents = json.dumps(plan.to_json())
+            target_file.write(target_file_contents)
+            target_file.flush()
+            cmd.extend(["-targets", target_file.name])
+
+            # adding limits
+            cmd.extend(
+                [
+                    "-timeout",
+                    str(self._timeout),
+                    "-timeout_threshold",
+                    str(self._timeout_threshold),
+                    "-max_memory",
+                    str(self._max_memory),
+                ]
+            )
+
+            if time_flag:
+                cmd.append("-json_time")
 
             # Create a map to feed to semgrep-core as an alternative to
             # having it actually read the files.
@@ -994,33 +1046,19 @@ class CoreRunner:
                 rule_file.name: rule_file_contents.encode("UTF-8"),
             }
 
-            # Run semgrep
-            cmd = [
-                str(self._binary_path),
-                "-json",
-                "-rules",
-                rule_file.name,
-                "-j",
-                str(self._jobs),
-                "-targets",
-                target_file.name,
-                "-timeout",
-                str(self._timeout),
-                "-timeout_threshold",
-                str(self._timeout_threshold),
-                "-max_memory",
-                str(self._max_memory),
-                "-json_time",
-            ]
-
-            if self._core_opts:
-                logger.info(
-                    f"Running with user defined core options: {self._core_opts}"
-                )
-                cmd.extend(self._core_opts)
-
             if self._optimizations != "none":
                 cmd.append("-fast")
+
+            if run_secrets:
+                cmd += ["-secrets"]
+                if not engine.is_pro:
+                    # This should be impossible, but the types don't rule it out so...
+                    raise SemgrepError(
+                        "Secrets post processors tried to run without the pro-engine."
+                    )
+
+            if self._allow_untrusted_postprocessors:
+                cmd.append("-allow-untrusted-postprocessors")
 
             # TODO: use exact same command-line arguments so just
             # need to replace the SemgrepCore.path() part.
@@ -1082,19 +1120,22 @@ class CoreRunner:
                 runner.stdout,
                 runner.stderr,
             )
-            core_output = parse_core_output(output_json)
-
-            if ("time" in output_json) and core_output.time:
-                self._add_match_times(profiling_data, core_output.time)
-                self._add_max_memory_bytes(
-                    profiling_data, core_output.time.max_memory_bytes
-                )
+            core_output = out.CoreOutput.from_json(output_json)
+            if core_output.paths.skipped:
+                for skip in core_output.paths.skipped:
+                    if skip.rule_id:
+                        rule_info = f"rule {skip.rule_id}"
+                    else:
+                        rule_info = "all rules"
+                        logger.verbose(
+                            f"skipped '{skip.path}' [{rule_info}]: {skip.reason}: {skip.details}"
+                        )
 
             # end with tempfile.NamedTemporaryFile(...) ...
             outputs = core_matches_to_rule_matches(rules, core_output)
             parsed_errors = [core_error_to_semgrep_error(e) for e in core_output.errors]
             for err in core_output.errors:
-                if isinstance(err.error_type.value, core.Timeout):
+                if isinstance(err.error_type.value, out.Timeout):
                     assert err.location.path is not None
 
                     file_timeouts[Path(err.location.path.value)] += 1
@@ -1107,22 +1148,20 @@ class CoreRunner:
                 if isinstance(
                     err.error_type.value,
                     (
-                        core.LexicalError,
-                        core.ParseError,
-                        core.PartialParsing,
-                        core.SpecifiedParseError,
-                        core.AstBuilderError,
+                        out.LexicalError,
+                        out.ParseError,
+                        out.PartialParsing,
+                        out.SpecifiedParseError,
+                        out.AstBuilderError,
                     ),
                 ):
                     parsing_data.add_error(err)
             errors.extend(parsed_errors)
 
         output_extra = OutputExtra(
+            core_output,
             all_targets,
-            profiling_data,
             parsing_data,
-            core_output.explanations,
-            core_output.rules_by_engine,
         )
 
         return (
@@ -1136,7 +1175,10 @@ class CoreRunner:
         rules: List[Rule],
         target_manager: TargetManager,
         dump_command_for_core: bool,
+        time_flag: bool,
         engine: EngineType,
+        run_secrets: bool,
+        target_mode_config: TargetModeConfig,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1148,7 +1190,13 @@ class CoreRunner:
         """
         try:
             return self._run_rules_direct_to_semgrep_core_helper(
-                rules, target_manager, dump_command_for_core, engine
+                rules,
+                target_manager,
+                dump_command_for_core,
+                time_flag,
+                engine,
+                run_secrets,
+                target_mode_config,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1175,12 +1223,15 @@ Exception raised: `{e}`
 
     # end _run_rules_direct_to_semgrep_core
 
-    def invoke_semgrep(
+    def invoke_semgrep_core(
         self,
         target_manager: TargetManager,
         rules: List[Rule],
         dump_command_for_core: bool,
+        time_flag: bool,
         engine: EngineType,
+        run_secrets: bool,
+        target_mode_config: TargetModeConfig,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and retuns object with findings
@@ -1192,7 +1243,13 @@ Exception raised: `{e}`
             errors,
             output_extra,
         ) = self._run_rules_direct_to_semgrep_core(
-            rules, target_manager, dump_command_for_core, engine
+            rules,
+            target_manager,
+            dump_command_for_core,
+            time_flag,
+            engine,
+            run_secrets,
+            target_mode_config,
         )
 
         logger.debug(
@@ -1246,7 +1303,7 @@ Exception raised: `{e}`
             output_json = self._extract_core_output(
                 metachecks, returncode, " ".join(cmd), runner.stdout, runner.stderr
             )
-            core_output = parse_core_output(output_json)
+            core_output = out.CoreOutput.from_json(output_json)
 
             parsed_errors += [
                 core_error_to_semgrep_error(e) for e in core_output.errors

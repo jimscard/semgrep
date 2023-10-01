@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/autofix/csv-writer.py"
     ]
@@ -35,7 +34,8 @@
           ]
         },
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/autofix/csv-writer.py",
       "start": {
@@ -72,7 +72,8 @@
           ]
         },
         "metavars": {},
-        "severity": "ERROR"
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/autofix/csv-writer.py",
       "start": {
@@ -82,5 +83,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

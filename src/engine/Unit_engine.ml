@@ -4,8 +4,8 @@ open Testutil
 module R = Rule
 module MR = Mini_rule
 module P = Pattern_match
-module E = Semgrep_error_code
-module Out = Output_from_core_t
+module E = Core_error
+module Out = Semgrep_output_v1_t
 
 let logger = Logging.get_logger [ __MODULE__ ]
 
@@ -283,12 +283,12 @@ let match_pattern ~lang ~hook ~file ~pattern ~fix_pattern =
   in
   let rule =
     {
-      MR.id = Rule.ID.of_string "unit-testing";
+      MR.id = Rule_ID.of_string "unit-testing";
       pattern;
       inside = false;
       message = "";
       severity = R.Error;
-      languages = [ lang ];
+      langs = [ lang ];
       pattern_string = "test: no need for pattern string";
       fix = fix_pattern;
     }
@@ -348,7 +348,7 @@ let regression_tests_for_lang ~polyglot_pattern_path files lang =
                  ~hook:(fun { Pattern_match.range_loc; _ } ->
                    let start_loc, _end_loc = range_loc in
                    E.error
-                     (Rule.ID.of_string "test-pattern")
+                     (Rule_ID.of_string "test-pattern")
                      start_loc "" Out.SemgrepMatchFound)
                  ~file ~pattern ~fix_pattern
              in
@@ -416,13 +416,11 @@ let lang_regression_tests ~polyglot_pattern_path =
         (Lang.Solidity, "solidity", ".sol");
         (Lang.Elixir, "elixir", ".ex");
         (Lang.R, "r", ".r");
-        (* TODO: weird because the tests work in check_maturity above
-         * but note here
-         * (Lang.Julia, "julia", ".jl");
-         *)
+        (Lang.Julia, "julia", ".jl");
         (Lang.Jsonnet, "jsonnet", ".jsonnet");
         (Lang.Clojure, "clojure", ".clj");
         (Lang.Xml, "xml", ".xml");
+        (Lang.Dart, "dart", ".dart");
       ]
   in
   let irregular_tests =
@@ -473,21 +471,22 @@ let eval_regression_tests () =
 (*****************************************************************************)
 
 let test_irrelevant_rule rule_file target_file =
+  let cache = Some (Hashtbl.create 101) in
   let rules = Parse_rule.parse rule_file in
   rules
   |> List.iter (fun rule ->
-         match Analyze_rule.regexp_prefilter_of_rule rule with
+         match Analyze_rule.regexp_prefilter_of_rule ~cache rule with
          | None ->
              Alcotest.fail
                (spf "Rule %s: no regex prefilter formula"
-                  (fst rule.id :> string))
+                  (Rule_ID.to_string (fst rule.id)))
          | Some (f, func) ->
              let content = File.read_file target_file in
              let s = Semgrep_prefilter_j.string_of_formula f in
              if func content then
                Alcotest.fail
                  (spf "Rule %s considered relevant by regex prefilter: %s"
-                    (fst rule.id :> string)
+                    (Rule_ID.to_string (fst rule.id))
                     s))
 
 let test_irrelevant_rule_file target_file =
@@ -529,15 +528,16 @@ let filter_irrelevant_rules_tests () =
 (*****************************************************************************)
 
 let get_extract_source_lang file rules =
-  let _, _, erules, _ = R.partition_rules rules in
+  let _, _, erules, _, _ = R.partition_rules rules in
   let erule_langs =
-    erules |> Common.map (fun r -> r.R.languages) |> List.sort_uniq compare
+    erules
+    |> Common.map (fun r -> r.R.target_analyzer)
+    |> List.sort_uniq compare
   in
   match erule_langs with
   | [] -> failwith (spf "no language for extract rule found in %s" !!file)
-  | [ x ] -> x.target_analyzer
-  | x :: _ ->
-      let xlang = x.target_analyzer in
+  | [ x ] -> x
+  | xlang :: _ ->
       pr2
         (spf
            "too many languages from extract rules found in %s, picking the \
@@ -575,15 +575,16 @@ let tainting_test lang rules_file file =
   let rules =
     rules
     |> List.filter (fun r ->
-           match r.Rule.languages.target_analyzer with
+           match r.Rule.target_analyzer with
            | Xlang.L (x, xs) -> List.mem lang (x :: xs)
            | _ -> false)
   in
-  let search_rules, taint_rules, extract_rules, join_rules =
+  let search_rules, taint_rules, extract_rules, secrets_rules, join_rules =
     Rule.partition_rules rules
   in
   assert (search_rules =*= []);
   assert (extract_rules =*= []);
+  assert (secrets_rules =*= []);
   assert (join_rules =*= []);
   let xconf = Match_env.default_xconfig in
 
@@ -681,6 +682,13 @@ let lang_tainting_tests () =
            Common2.glob (spf "%s/*.js" !!dir) |> File.Path.of_strings
          in
          let lang = Lang.Js in
+         tainting_tests_for_lang files lang);
+      pack_tests "tainting Ruby"
+        (let dir = taint_tests_path / "ruby" in
+         let files =
+           Common2.glob (spf "%s/*.rb" !!dir) |> File.Path.of_strings
+         in
+         let lang = Lang.Ruby in
          tainting_tests_for_lang files lang);
       pack_tests "tainting Typescript"
         (let dir = taint_tests_path / "ts" in

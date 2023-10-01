@@ -77,7 +77,6 @@ let subexprs_of_stmt_kind = function
       |> Common.map_filter (function
            | Arg e -> Some e
            | _ -> None)
-  | For (_, ForIn (_, es), _) -> es
   | OtherStmt (_op, xs) -> subexprs_of_any_list xs
   | OtherStmtWithStmt (_, xs, _) -> subexprs_of_any_list xs
   (* 0 *)
@@ -302,11 +301,14 @@ let substmts_of_stmt st =
       |> List.concat_map (function
            | CasesAndBody (_, st) -> [ st ]
            | CaseEllipsis _ -> [])
-  | Try (_, st, xs, opt) -> (
+  | Try (_, st, xs, opt1, opt2) -> (
       [ st ]
       @ (xs |> Common.map Common2.thd3)
+      @ (match opt1 with
+        | None -> []
+        | Some (_, st) -> [ st ])
       @
-      match opt with
+      match opt2 with
       | None -> []
       | Some (_, st) -> [ st ])
   | DisjStmt _ -> raise Common.Impossible

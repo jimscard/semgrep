@@ -53,7 +53,16 @@ type value =
 (* less: Id of string (* simpler to merge with AST *) *)
 [@@deriving show]
 
-type env = { mvars : (MV.mvar, value) Hashtbl.t; constant_propagation : bool }
+type env = {
+  mvars : (MV.mvar, value) Hashtbl.t;
+  constant_propagation : bool;
+  file : Fpath.t;
+      (** The file that we are currently matching the AST of. We need this so that
+        `eval` can call the `Metavariable_regex` logic, whcih needs to produce
+        matches that have position data localized to the originating file,
+        rather than the originating match.
+      *)
+}
 
 (* we restrict ourselves to simple expressions for now *)
 type code = AST_generic.expr
@@ -103,6 +112,7 @@ let parse_json file =
             {
               mvars = Common.hash_of_list metavars;
               constant_propagation = true;
+              file = Fpath.v file;
             }
           in
           (env, code)
@@ -156,6 +166,48 @@ let string_to_date s code =
       | _ -> raise (NotHandled code))
   | _ -> raise (NotHandled code)
 
+(*
+   Helper function to convert string duration into milliseconds for comparison.
+   See https://prometheus.io/docs/prometheus/latest/querying/basics/#time-durations
+   We do accept more duration strings here then prometheus which is okay.
+*)
+let string_duration_to_milliseconds s code =
+  let int_of_string s =
+    if s = "" then raise (NotHandled code) else int_of_string s
+  in
+  let l = String.length s in
+  let rec loop (x, v) i =
+    if i >= l then if x = "" then v else raise (NotHandled code)
+    else
+      let c = String.get s i in
+      match c with
+      | '0' .. '9' -> loop (x ^ (String.get s i |> String.make 1), v) (i + 1)
+      | 's' ->
+          let d = int_of_string x in
+          loop ("", v + (d * 1000)) (i + 1)
+      | 'm' ->
+          let d = int_of_string x in
+          if i < l - 1 then
+            match String.get s (i + 1) with
+            | 's' -> loop ("", v + d) (i + 2)
+            | _ -> loop ("", v + (d * 60 * 1000)) (i + 1)
+          else loop ("", v + (d * 60 * 1000)) (i + 1)
+      | 'h' ->
+          let d = int_of_string x in
+          loop ("", v + (d * 60 * 60 * 1000)) (i + 1)
+      | 'd' ->
+          let d = int_of_string x in
+          loop ("", v + (d * 24 * 60 * 60 * 1000)) (i + 1)
+      | 'w' ->
+          let d = int_of_string x in
+          loop ("", v + (d * 7 * 24 * 60 * 60 * 1000)) (i + 1)
+      | 'y' ->
+          let d = int_of_string x in
+          loop ("", v + (d * 365 * 24 * 60 * 60 * 1000)) (i + 1)
+      | _ -> raise (NotHandled code)
+  in
+  if s = "" then raise (NotHandled code) else Int (loop ("", 0) 0)
+
 let value_of_lit ~code x =
   match x with
   | G.Bool (b, _t) -> Bool b
@@ -164,6 +216,19 @@ let value_of_lit ~code x =
   | G.Int (Some i, _t) -> Int i
   | G.Float (Some f, _t) -> Float f
   | _ -> raise (NotHandled code)
+
+let eval_regexp_matches ?(base_offset = 0) ~file ~regexp:re str =
+  (* alt: take the text range of the metavariable in the original file,
+     * and enforce e1 can only be an Id metavariable.
+     * alt: let s = value_to_string v in
+     * to convert anything in a string before using regexps on it
+  *)
+  let regexp = Regexp_engine.pcre_compile_with_flags ~flags:[ `ANCHORED ] re in
+  let matches =
+    Xpattern_match_regexp.regexp_matcher ~base_offset str (Fpath.to_string file)
+      regexp
+  in
+  matches
 
 let rec eval env code =
   match code.G.e with
@@ -236,6 +301,14 @@ let rec eval env code =
       | __else__ -> raise (NotHandled code))
   | G.Call ({ e = G.N (G.Id (("today", _), _)); _ }, (_, _, _)) ->
       Float (Unix.time ())
+  (* Convert prometheus duration strings to integer milliseconds*)
+  | G.Call
+      ( { e = G.N (G.Id (("parse_promql_duration", _), _)); _ },
+        (_, [ Arg e ], _) ) -> (
+      let v = eval env e in
+      match v with
+      | String s -> string_duration_to_milliseconds s code
+      | __else__ -> raise (NotHandled code))
   (* Emulate Python re.match just enough *)
   | G.Call
       ( {
@@ -246,25 +319,18 @@ let rec eval env code =
                 FN (Id (("match", _), _)) );
           _;
         },
-        (_, [ G.Arg { e = G.L (G.String (_, (re, _), _)); _ }; G.Arg e2 ], _) )
+        (_, [ G.Arg { e = G.L (G.String (_, (re, _), _)); _ }; G.Arg e ], _) )
     -> (
-      (* alt: take the text range of the metavariable in the original file,
-       * and enforce e1 can only be an Id metavariable.
-       * alt: let s = value_to_string v in
-       * to convert anything in a string before using regexps on it
-       *)
-      let v = eval env e2 in
-
-      match v with
-      | String s ->
-          (* todo? factorize with Matching_generic.regexp_matcher_of_regexp_.. *)
-          (* TODO? allow capture group mvars from this *)
-          let regexp = SPcre.regexp ~flags:[ `ANCHORED ] re in
-          let res = SPcre.pmatch_noerr ~rex:regexp s in
-          let v = Bool res in
-          logger#info "regexp %s on %s return %s" re s (show_value v);
+      match eval env e with
+      | String str ->
+          let v =
+            match eval_regexp_matches ~file:env.file ~regexp:re str with
+            | [] -> Bool false
+            | _ -> Bool true
+          in
+          logger#info "regexp %s on %s return %s" re str (show_value v);
           v
-      | _ -> raise (NotHandled code))
+      | _ -> raise (NotHandled e))
   | _ -> raise (NotHandled code)
 
 and eval_op op values code =
@@ -334,12 +400,17 @@ and eval_op op values code =
   (* TODO? dangerous use of polymorphic <> ? *)
   | G.NotEq, [ v1; v2 ] -> Bool (v1 <> v2)
   | G.In, [ v1; v2 ] -> (
-      match v2 with
-      | List xs -> Bool (List.mem v1 xs)
+      match (v1, v2) with
+      | _, List xs -> Bool (List.mem v1 xs)
+      | String v1, String v2 ->
+          Bool (Common2.string_match_substring (Str.regexp_string v1) v2)
       | _ -> Bool false)
   | G.NotIn, [ v1; v2 ] -> (
-      match v2 with
-      | List xs -> Bool (not (List.mem v1 xs))
+      match (v1, v2) with
+      | _, List _
+      | String _, String _ ->
+          (* Just negate the "in" *)
+          eval_op G.Not [ eval_op G.In values code ] code
       | _ -> Bool false)
   (* less: it would be better to show the actual values not handled,
    * rather than the code, because this may differ as the code does not
@@ -376,7 +447,7 @@ let text_of_binding mvar mval =
    * In that case, it's better to pretty print the code rather than using
    * Visitor_AST.range_of_any_opt and Range.contents_at_range below.
    *
-   * The 'id_hidden = false' guard is to avoid to pretty print
+   * The 'not is_hidden' guard is to avoid to pretty print
    * artificial identifiers such as "builtin__include" in PHP that
    * we generate during parsing.
    * TODO: get rid of the ugly __builtin__ once we've fixed
@@ -385,9 +456,10 @@ let text_of_binding mvar mval =
    * TODO: handle also MV.Name, MV.E of DotAccess; maybe use
    * Pretty_print/Ugly_print to factorize work.
    *)
-  | MV.Id ((s, _tok), (None | Some { id_hidden = false; _ }))
-    when not (s =~ "^__builtin.*") ->
+  | MV.Id ((s, _tok), Some { id_flags; _ })
+    when (not (s =~ "^__builtin.*")) && not (IdFlags.is_hidden !id_flags) ->
       Some s
+  | MV.Id ((s, _tok), None) when not (s =~ "^__builtin.*") -> Some s
   | _ -> (
       let any = MV.mvalue_to_any mval in
       match AST_generic_helpers.range_of_any_opt any with
@@ -405,7 +477,7 @@ let string_of_binding mvar mval =
   let* x = text_of_binding mvar mval in
   Some (mvar, AST x)
 
-let bindings_to_env (config : Rule_options.t) bindings =
+let bindings_to_env (config : Rule_options.t) ~file bindings =
   let constant_propagation = config.constant_propagation in
   let mvars =
     bindings
@@ -414,7 +486,9 @@ let bindings_to_env (config : Rule_options.t) bindings =
              try
                Some
                  ( mvar,
-                   eval { mvars = Hashtbl.create 0; constant_propagation } e )
+                   eval
+                     { mvars = Hashtbl.create 0; constant_propagation; file }
+                     e )
              with
              | NotHandled _
              | NotInEnv _ ->
@@ -439,15 +513,15 @@ let bindings_to_env (config : Rule_options.t) bindings =
            | x -> string_of_binding mvar x)
     |> Common.hash_of_list
   in
-  { mvars; constant_propagation }
+  { mvars; constant_propagation; file }
 
-let bindings_to_env_just_strings (config : Rule_options.t) xs =
+let bindings_to_env_just_strings (config : Rule_options.t) ~file xs =
   let mvars =
     xs
     |> Common.map_filter (fun (mvar, mval) -> string_of_binding mvar mval)
     |> Common.hash_of_list
   in
-  { mvars; constant_propagation = config.constant_propagation }
+  { mvars; constant_propagation = config.constant_propagation; file }
 
 (*****************************************************************************)
 (* Entry points *)
@@ -477,20 +551,24 @@ let test_eval file =
  * code like `os.getenv('a', 'defaulta')` where $BITS will bind
  * to a string literal, which can't be compared with '<= 0o650'.
  *)
-let eval_bool env e =
-  try
-    let res = eval env e in
-    match res with
-    | Bool b -> b
-    | _ ->
-        logger#trace "not a boolean: %s" (show_value res);
-        false
-  with
+let eval_opt env e =
+  try Some (eval env e) with
   (* this can happen when a metavar is bound to a complex expression,
    * in which case it's filtered in bindings_to_env(), in which case
    * it generates a NotInEnv when we run eval with such an environment.
    *)
-  | NotInEnv _ -> false
+  | NotInEnv _ -> None
   | NotHandled e ->
       logger#trace "NotHandled: %s" (G.show_expr e);
+      None
+
+let eval_bool env e =
+  let res = eval_opt env e in
+  match res with
+  | Some (Bool b) -> b
+  | Some res ->
+      logger#trace "not a boolean: %s" (show_value res);
+      false
+  | None ->
+      logger#trace "got exn during eval_bool";
       false

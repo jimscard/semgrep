@@ -1,7 +1,6 @@
 {
   "errors": [],
   "paths": {
-    "_comment": "<add --verbose for a list of skipped paths>",
     "scanned": [
       "targets/taint/taint.py"
     ]
@@ -96,7 +95,8 @@
         "message": "A user input source() went into a dangerous sink()",
         "metadata": {},
         "metavars": {},
-        "severity": "WARNING"
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
       },
       "path": "targets/taint/taint.py",
       "start": {
@@ -106,5 +106,6 @@
       }
     }
   ],
+  "skipped_rules": [],
   "version": "0.42"
 }

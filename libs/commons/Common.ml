@@ -13,6 +13,8 @@
  * license.txt for more details.
  *)
 
+open Sexplib.Std
+
 let logger = Logging.get_logger [ __MODULE__ ]
 
 (*###########################################################################*)
@@ -371,6 +373,7 @@ let rec take_safe n xs =
   | _, [] -> []
   | n, x :: xs -> x :: take_safe (n - 1) xs
 
+(* Partition elements by key. Preserve the original order. *)
 let group_by f xs =
   (* use Hashtbl.find_all property *)
   let h = Hashtbl.create 101 in
@@ -383,7 +386,9 @@ let group_by f xs =
          let k = f x in
          Hashtbl.replace hkeys k true;
          Hashtbl.add h k x);
-  Hashtbl.fold (fun k _ acc -> (k, Hashtbl.find_all h k) :: acc) hkeys []
+  Hashtbl.fold
+    (fun k _ acc -> (k, Hashtbl.find_all h k |> List.rev) :: acc)
+    hkeys []
 
 let group_by_multi fkeys xs =
   (* use Hashtbl.find_all property *)
@@ -586,7 +591,7 @@ let ( ||| ) a b =
   | Some x -> x
   | None -> b
 
-type ('a, 'b) either = Left of 'a | Right of 'b [@@deriving eq, show]
+type ('a, 'b) either = Left of 'a | Right of 'b [@@deriving eq, show, sexp]
 
 (* with sexp *)
 type ('a, 'b, 'c) either3 = Left3 of 'a | Middle3 of 'b | Right3 of 'c
@@ -733,13 +738,21 @@ let i_to_s = string_of_int
 let s_to_i = int_of_string
 let null_string s = s = ""
 
+let contains s1 s2 =
+  let re = Str.regexp_string s2 in
+  try
+    ignore (Str.search_forward re s1 0);
+    true
+  with
+  | Not_found -> false
+
 (*****************************************************************************)
 (* Filenames *)
 (*****************************************************************************)
 
 (* TODO: we should use strong types like in Li Haoyi filename Scala library! *)
 type filename = string (* TODO could check that exist :) type sux *)
-[@@deriving show, eq]
+[@@deriving show, eq, ord, sexp]
 
 let chop_dirsymbol = function
   | s when s =~ "\\(.*\\)/$" -> matched1 s
